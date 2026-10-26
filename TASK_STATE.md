@@ -2,8 +2,8 @@
 
 ## 1. Task Foundation
 - True Goal: 建立可回退、可测试的 GitHub Scout Agent Python 工程基础和只读工具系统，并按阶段推进受限 Agent Loop 开发。
-- Current Stage: S3-04-Fix01 候选预算终止逻辑修复（完成）
-- Active Mainline: T06-Fix01: 修复候选容量与致命预算混淆，保留已接受候选补查并阻断未接受候选绕过容量；等待用户审阅后再进入 S4。
+- Current Stage: S4-01 真实 GitHub REST 只读接口验收（完成）
+- Active Mainline: T07: 完成无 Token 公开 REST 五工具验收，保留显式 live marker 和严格请求预算；等待用户授权进入 S4-02。
 
 ## 2. Frozen Baselines and Inline Evidence
 - F1 Fact Baseline:
@@ -20,6 +20,9 @@
   - F1-11: S3-03 完整离线 pytest 实际结果为 52 passed in 0.45s；CLI help/version/config/mock-demo、compileall 均通过；未调用真实 GitHub 或模型 API。
   - F1-12: Mock CLI 实际轨迹：model calls=3；search_public_repositories 调用 2 次；首次空结果后改写查询；最终 model_completed；GitHub requests=2；candidate=1。
   - F1-13: S3-04-Fix01 完整离线 pytest 实际结果为 58 passed in 0.43s；候选容量满额后已接受 README/许可证补查通过；新候选与未接受候选被阻断；mock-demo、compileall、CLI 回归通过。
+  - F1-14: S4-01 官方文档核验覆盖搜索、仓库、README/Contents、许可证、语言/Topics、认证、细粒度只读权限和限流；当前实现使用固定 api.github.com、GET、Accept 和 API version header。
+  - F1-15: S4-01 显式 live_github 测试无 Token 实际通过：1 passed，6 次 GET，全部 api.github.com；搜索、仓库详情、README、许可证、Languages、Topics 均解析成功；许可证真实状态为 unknown，Languages/Topics 为空但类型正确，仓库公开且未归档。
+  - F1-16: S4-01 Token 模式未执行：当前环境未配置 GITHUB_TOKEN；无权限创建/提升/修改，也未展示任何凭据。默认 pytest 为 58 passed、1 deselected，真实测试不默认运行。
 - F2 Decision Baseline:
   - F2-01 (D1): MVP 采用 CLI；本地 Web UI 后置；Windows 桌面应用不属于 MVP。
   - F2-02 (D2): 支持无 Token 和用户自配只读 Token；只读公开仓库；不支持私有仓库、账户管理和任何 GitHub 写操作；Token 不进入模型、报告、普通日志或版本控制。
@@ -32,9 +35,10 @@
   - F3-03: S3-02-Fix01 修复提交：6f0bfdfe6233fd22db288d959b02a143cbe42f2d (`fix: harden github tool safety boundaries`)；未执行破坏性回滚操作。
   - F3-04: S3-03 实施提交：cfd4074bdf6850768758000c2581d306ff38142c (`feat: add constrained offline agent loop`)；未执行破坏性回滚操作。
   - F3-05: S3-04-Fix01 修复提交：344ccde4f44b4cd06ceb68dab128abbbe61de06f (`fix: keep candidate capacity separate from fatal budgets`)；未执行破坏性回滚操作。
+  - F3-06: S4-01 实施提交：3544b6257c2abc8354d8fae632c26ab56a24c6a2 (`test: verify github public rest integration`)；未配置或推送 remote。
 
 ## 3. Current Engineering Flow and Impediments
-- Current Impediment / Stop Point: None；S3-04-Fix01 已完成；S4 真实 GitHub API 集成必须等待用户明确授权。
+- Current Impediment / Stop Point: None；S4-01 已完成；S4-02 必须等待用户明确授权。
 - [x] T01: 完成 S0 产品需求分析 -> Target Artifact: docs/GitHub-Scout-Agent-产品需求分析-V0.1.md | Verification: 文件已实际读取；V0.1 保留。
 - [x] T02: 完成 S1 产品需求冻结 -> Target Artifact: docs/GitHub-Scout-Agent-PRD-V0.2.md | Verification: 五项决策、MVP、Agent Loop、只读边界、F/S 验收和 S0-S6 路线已写入；文档一致性检查通过。
 - [x] T03: 完成 S2 技术架构设计 -> Target Artifact: docs/GitHub-Scout-Agent-技术架构设计-V0.1.md | Verification: 总体架构、Agent Loop、工具/API、数据、报告、安全、预算、错误、技术栈、测试和 S3-S5 依赖已写入；文档一致性检查通过；待用户验收。
@@ -43,8 +47,9 @@
 - [x] T05-Fix01: 完成 S3-02 安全缺陷修复 -> Target Artifact: src/github_scout_agent/{budget,github_api,github_models}.py、tests/test_github_tools.py | Verification: P1-01/P1-02/P2-01/P2-02 已修复；35 tests passed；未调用真实 GitHub 或模型 API。
 - [x] T06: 完成 S3-03 受限 Agent Loop 与 Mock Tool Calling -> Target Artifact: src/github_scout_agent/{agent_loop,agent_models,mock_llm,events,demo}.py、tests/test_agent_loop.py | Verification: 多轮反馈、多个 Tool Call、协议错误、重复行动、五类预算、事件脱敏和 Mock CLI 演示均已验证；52 tests passed。
 - [x] T06-Fix01: 完成 S3-04 候选容量修复 -> Target Artifact: src/github_scout_agent/{agent_loop,budget,github_api,tool_registry}.py、tests/test_agent_loop.py、tests/test_github_tools.py | Verification: 唯一候选身份、容量非 fatal、已接受候选补查、未接受候选阻断和其他预算终止均已验证；58 tests passed。
-- [ ] T07: 进入 S4 真实 GitHub API 集成 -> Target Artifact: 待授权 | Acceptance: 用户明确授权后再开始；当前不得调用真实 GitHub 或进入 S4/S5。
+- [x] T07: 完成 S4-01 真实 GitHub REST 只读接口验收 -> Target Artifact: tests/test_live_github.py、src/github_scout_agent/github_api.py、pyproject.toml、README.md | Verification: 显式 live_github 无 Token 测试通过；6 GET、5 类工具路径、公开过滤、缺失许可证、README trust label、来源/抓取字段和 host/method 约束已验证；Token 模式待凭据验证。
+- [ ] T08: 进入 S4-02 -> Target Artifact: 待授权 | Acceptance: 用户明确授权后再开始；当前不得扩展真实 API 范围或调用模型 API。
 
 ## 4. Ruled-Out Approaches and Side Items
-- Ruled Out: MVP 不采用 GitHub 写操作、私有仓库、Clone、第三方代码执行、任意 Shell、用户真实文件管理、复杂多 Provider 框架、非结构化伪工具调用、多 Agent、RAG、GraphQL 强制迁移和 Windows 桌面应用；Fix01 后仍未实现真实 LLM 客户端、真实 GitHub API、推荐评分或最终报告 | Credentials: 用户 D1-D5、PRD V0.2、S2 设计约束、Fix01 离线测试和 Mock CLI 轨迹 | Revert Scope: None | Retained Net Assets: V0.1、PRD V0.2、架构设计 V0.1、基础 CLI、只读工具注册表、Mock REST 客户端、Agent Loop、唯一候选池、容量/致命预算分离、事件记录和离线测试。
+- Ruled Out: MVP 不采用 GitHub 写操作、私有仓库、Clone、第三方代码执行、任意 Shell、用户真实文件管理、复杂多 Provider 框架、非结构化伪工具调用、多 Agent、RAG、GraphQL 强制迁移和 Windows 桌面应用；S4-01 未调用真实模型、未访问私有仓库、未执行写操作，Token 模式待凭据验证 | Credentials: 用户 D1-D5、PRD V0.2、S2 设计约束、S4-01 官方文档和 live_github 证据 | Revert Scope: None | Retained Net Assets: V0.1、PRD V0.2、架构设计 V0.1、基础 CLI、只读工具注册表、Mock REST 客户端、Agent Loop、唯一候选池、真实 API 显式测试入口和离线测试。
 - P-01: MVP 完成后评估本地 Web UI、更多模型端点和历史报告/本地索引 | Reason for Deferral: 不影响当前 CLI Agent 闭环和安全验收 | Wake-up Timing: S5 MVP 验收后。
