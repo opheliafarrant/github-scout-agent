@@ -200,7 +200,11 @@ class AgentLoop:
                     )
                 if result.error and result.error.code == "candidate_capacity_full":
                     capacity_blocked_searches += 1
-                    if capacity_blocked_searches > 1:
+                    evidence_policy_active = (
+                        self.config.require_candidate_readme
+                        or bool((self.config.required_language or "").strip())
+                    )
+                    if capacity_blocked_searches > 1 and not evidence_policy_active:
                         should_stop = True
                         termination_reason = "candidate_capacity_full"
                 if self.budget.fatal_exhausted_dimensions:
