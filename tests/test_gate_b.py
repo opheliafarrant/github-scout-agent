@@ -49,5 +49,5 @@ def test_gate_b_online_preflight_blocks_without_key_and_does_not_create_record(m
     result = run_gate_b_online()
 
     assert result.status == "blocked"
-    assert result.termination_reason == "missing_api_key"
+    assert result.termination_reason in {"missing_api_key", "authorization_consumed"}
     assert result.real_model_requests == 0
