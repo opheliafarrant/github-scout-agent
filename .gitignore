@@ -1,0 +1,38 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local environments and packaging output
+.venv/
+venv/
+env/
+ENV/
+build/
+dist/
+*.egg-info/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# Local runtime output
+logs/
+reports/
+*.log
+.scout/
+
+# Local editor and OS files
+.idea/
+.vscode/
+Thumbs.db
+Desktop.ini
