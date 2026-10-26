@@ -15,9 +15,11 @@ class ScriptedMockLLM:
     def __init__(self, responses: Iterable[AssistantResponse]) -> None:
         self.responses = list(responses)
         self.calls = 0
+        self.tool_choices: list[str] = []
 
-    def complete(self, messages: list[AgentMessage], tools: list[dict[str, Any]]) -> AssistantResponse:
+    def complete(self, messages: list[AgentMessage], tools: list[dict[str, Any]], *, tool_choice: str = "auto") -> AssistantResponse:
         del messages, tools
+        self.tool_choices.append(tool_choice)
         if self.calls >= len(self.responses):
             raise ModelCallError("mock response script exhausted")
         response = self.responses[self.calls]
@@ -41,10 +43,12 @@ class ScenarioMockLLM:
         self.calls = 0
         self.history: list[list[AgentMessage]] = []
 
-    def complete(self, messages: list[AgentMessage], tools: list[dict[str, Any]]) -> AssistantResponse:
+    def complete(self, messages: list[AgentMessage], tools: list[dict[str, Any]], *, tool_choice: str = "auto") -> AssistantResponse:
         del tools
         self.calls += 1
         self.history.append(list(messages))
+        if tool_choice == "none":
+            return AssistantResponse(content="Mock finalized the evidence-constrained report.", finish_reason="stop")
         if self.scenario == "direct_complete":
             return AssistantResponse(content="Mock task complete.", finish_reason="stop")
         if self.scenario == "invalid_tool":
@@ -163,7 +167,7 @@ class GateBMockLLM:
     def __init__(self) -> None:
         self.calls = 0
 
-    def complete(self, messages: list[AgentMessage], tools: list[dict[str, Any]]) -> AssistantResponse:
+    def complete(self, messages: list[AgentMessage], tools: list[dict[str, Any]], *, tool_choice: str = "auto") -> AssistantResponse:
         del tools
         self.calls += 1
         tool_messages = [message for message in messages if message.role == "tool"]

@@ -143,6 +143,74 @@ def test_full_candidate_capacity_does_not_block_readme_followup_for_accepted_rep
     assert result.tool_results[1].ok is True
 
 
+def test_finalization_reserve_turns_t21_like_trace_into_complete_report() -> None:
+    responses = [
+        AssistantResponse(tool_calls=[ToolCall(id="search", name="search_public_repositories", arguments=json.dumps({"query": "first"}))]),
+        AssistantResponse(tool_calls=[ToolCall(id="readme", name="get_public_readme", arguments=json.dumps({"owner": "octo", "repo": "repo-0"}))]),
+        AssistantResponse(content="Final comparison based on verified evidence."),
+    ]
+    mock = ScriptedMockLLM(responses)
+    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=20_000)
+    with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_full_pool_handler)) as client:
+        result = AgentLoop(
+            model=mock,
+            tools=build_github_tool_registry(client),
+            budget=budget,
+            config=AgentLoopConfig(finalization_reserve_calls=1),
+        ).run("converge")
+
+    assert result.status == "completed"
+    assert result.termination_reason == "model_finalized"
+    assert result.final_text.startswith("Final comparison")
+    assert mock.tool_choices == ["auto", "auto", "none"]
+    assert budget.github_requests_used == 2
+
+
+def test_finalization_stops_t21_like_repeated_search_after_evidence() -> None:
+    responses = [
+        AssistantResponse(tool_calls=[ToolCall(id="search-1", name="search_public_repositories", arguments=json.dumps({"query": "first"}))]),
+        AssistantResponse(tool_calls=[ToolCall(id="search-2", name="search_public_repositories", arguments=json.dumps({"query": "different"}))]),
+        AssistantResponse(tool_calls=[ToolCall(id="readme", name="get_public_readme", arguments=json.dumps({"owner": "octo", "repo": "repo-0"}))]),
+        AssistantResponse(content="Final comparison after bounded evidence collection."),
+    ]
+    mock = ScriptedMockLLM(responses)
+    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=20_000)
+    with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_full_pool_handler)) as client:
+        result = AgentLoop(
+            model=mock,
+            tools=build_github_tool_registry(client),
+            budget=budget,
+            config=AgentLoopConfig(finalization_reserve_calls=1),
+        ).run("t21-like")
+
+    assert result.status == "completed"
+    assert result.termination_reason == "model_finalized"
+    assert mock.tool_choices == ["auto", "auto", "auto", "none"]
+    assert budget.github_requests_used == 2
+
+
+def test_finalization_does_not_execute_new_tool_calls() -> None:
+    responses = [
+        AssistantResponse(tool_calls=[ToolCall(id="search", name="search_public_repositories", arguments=json.dumps({"query": "first"}))]),
+        AssistantResponse(tool_calls=[ToolCall(id="readme", name="get_public_readme", arguments=json.dumps({"owner": "octo", "repo": "repo-0"}))]),
+        AssistantResponse(tool_calls=[ToolCall(id="late", name="search_public_repositories", arguments=json.dumps({"query": "late"}))]),
+    ]
+    mock = ScriptedMockLLM(responses)
+    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=20_000)
+    with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_full_pool_handler)) as client:
+        result = AgentLoop(
+            model=mock,
+            tools=build_github_tool_registry(client),
+            budget=budget,
+            config=AgentLoopConfig(finalization_reserve_calls=1),
+        ).run("final tool violation")
+
+    assert result.status == "terminated"
+    assert result.termination_reason == "finalization_tool_call"
+    assert mock.tool_choices == ["auto", "auto", "none"]
+    assert budget.github_requests_used == 2
+
+
 def test_full_candidate_capacity_blocks_new_search_but_allows_accepted_followup() -> None:
     responses = [
         AssistantResponse(tool_calls=[ToolCall(id="search-1", name="search_public_repositories", arguments=json.dumps({"query": "first"}))]),

@@ -6,7 +6,7 @@ import json
 from collections.abc import Iterable
 from typing import Any
 
-from .agent_loop import AgentLoop, AgentRunResult
+from .agent_loop import AgentLoop, AgentLoopConfig, AgentRunResult
 from .budget import RequestBudget
 from .github_api import GitHubRestClient
 from .model_client import OpenAICompatibleClient
@@ -26,6 +26,7 @@ def run_research_task(
         model=model,
         tools=build_github_tool_registry(github),
         budget=budget,
+        config=AgentLoopConfig(finalization_reserve_calls=1),
     ).run(task)
 
 

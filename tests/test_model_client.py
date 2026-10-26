@@ -86,6 +86,23 @@ def test_request_uses_standard_chat_tool_calling_shape_and_preserves_usage() -> 
     assert response.usage.total_tokens == 14
 
 
+def test_tool_choice_none_is_supported_for_finalization_without_schema_rewrite() -> None:
+    captured: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content))
+        return _response(request, {"choices": [{"message": {"role": "assistant", "content": "final"}}]})
+
+    tools = [{"type": "function", "function": {"name": "demo", "parameters": {}}}]
+    client, _ = _client(handler)
+    with client:
+        response = client.complete([AgentMessage(role="user", content="finalize")], tools, tool_choice="none")
+
+    assert response.content == "final"
+    assert captured[0]["tool_choice"] == "none"
+    assert captured[0]["tools"] == tools
+
+
 def test_deepseek_preflight_non_thinking_disables_thinking_and_avoids_beta_strict() -> None:
     captured: list[dict[str, object]] = []
 

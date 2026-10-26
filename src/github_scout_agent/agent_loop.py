@@ -17,7 +17,13 @@ from .tool_registry import ToolRegistry
 
 
 class ModelAdapter(Protocol):
-    def complete(self, messages: list[AgentMessage], tools: list[dict[str, Any]]) -> AssistantResponse:
+    def complete(
+        self,
+        messages: list[AgentMessage],
+        tools: list[dict[str, Any]],
+        *,
+        tool_choice: str = "auto",
+    ) -> AssistantResponse:
         ...
 
 
@@ -25,6 +31,7 @@ class ModelAdapter(Protocol):
 class AgentLoopConfig:
     max_protocol_retries: int = 1
     max_repeated_actions: int = 1
+    finalization_reserve_calls: int = 0
 
 
 class AgentRunResult(BaseModel):
@@ -64,9 +71,18 @@ class AgentLoop:
         capacity_blocked_searches = 0
         final_text: str | None = None
         termination_reason = "unknown"
+        finalization_done = False
 
         self.events.emit("task_started", input_length=len(user_task))
         while True:
+            if (
+                not finalization_done
+                and self.config.finalization_reserve_calls > 0
+                and self._should_finalize(tool_results)
+                and (self._research_budget_boundary_reached() or self.budget.candidates_full)
+            ):
+                finalization_done = True
+                return self._finalize(messages, tool_results, final_text)
             try:
                 self.budget.reserve_model_call()
             except BudgetExceeded as exc:
@@ -205,6 +221,67 @@ class AgentLoop:
         except BudgetExceeded as exc:
             return self._blocked_result(call, "feedback_bytes", str(exc), request_count=result.request_count)
         return result
+
+    def _research_budget_boundary_reached(self) -> bool:
+        if self.budget.max_model_calls is None:
+            return False
+        research_limit = max(self.budget.max_model_calls - self.config.finalization_reserve_calls, 0)
+        return self.budget.model_calls_used >= research_limit
+
+    @staticmethod
+    def _should_finalize(tool_results: list[ToolResult]) -> bool:
+        evidence_tools = {
+            "get_public_repository",
+            "get_public_readme",
+            "get_repository_license",
+            "get_repository_languages_and_topics",
+        }
+        return any(result.ok and result.tool_name in evidence_tools for result in tool_results)
+
+    def _finalize(
+        self,
+        messages: list[AgentMessage],
+        tool_results: list[ToolResult],
+        final_text: str | None,
+    ) -> AgentRunResult:
+        try:
+            self.budget.reserve_model_call()
+        except BudgetExceeded as exc:
+            self.events.emit("task_terminated", reason=exc.dimension, budget=self.budget.snapshot())
+            return self._result("terminated", exc.dimension, final_text, messages, tool_results)
+        final_instruction = AgentMessage(
+            role="user",
+            content=(
+                "Produce the final evidence-constrained comparison and recommendation now. "
+                "Do not call tools. Separate verified repository facts, missing information, "
+                "and model interpretation; cite the existing source URLs."
+            ),
+        )
+        messages.append(final_instruction)
+        self.events.emit("finalization_started", model_call=self.budget.model_calls_used)
+        try:
+            response = self.model.complete(
+                messages=list(messages),
+                tools=self.tools.schemas(),
+                tool_choice="none",
+            )
+        except ModelCallError as exc:
+            self.events.emit("task_terminated", reason=exc.code, error_category=exc.category)
+            return self._result("terminated", exc.code, final_text, messages, tool_results)
+        self.events.emit(
+            "finalization_finished",
+            has_tool_calls=bool(response.tool_calls),
+            usage=response.usage.model_dump() if response.usage else {"status": "unknown"},
+        )
+        if response.tool_calls:
+            self.events.emit("task_terminated", reason="finalization_tool_call")
+            return self._result("terminated", "finalization_tool_call", final_text, messages, tool_results)
+        if response.content:
+            messages.append(response.as_message())
+            self.events.emit("task_completed", reason="model_finalized")
+            return self._result("completed", "model_finalized", response.content, messages, tool_results)
+        self.events.emit("task_terminated", reason="finalization_empty_response")
+        return self._result("terminated", "finalization_empty_response", final_text, messages, tool_results)
 
     @staticmethod
     def _action_signature(call: ToolCall) -> str:

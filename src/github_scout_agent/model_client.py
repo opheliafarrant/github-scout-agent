@@ -119,10 +119,16 @@ class OpenAICompatibleClient:
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
         self.close()
 
-    def complete(self, messages: list[AgentMessage], tools: list[dict[str, object]]) -> AssistantResponse:
+    def complete(
+        self,
+        messages: list[AgentMessage],
+        tools: list[dict[str, object]],
+        *,
+        tool_choice: Literal["auto", "none"] = "auto",
+    ) -> AssistantResponse:
         self.budget.check_task_time()
         try:
-            payload = self.build_payload(messages, tools)
+            payload = self.build_payload(messages, tools, tool_choice=tool_choice)
         except (TypeError, ValueError) as exc:
             raise ModelAdapterError("unable to construct model request", code="invalid_request", category="protocol") from exc
 
@@ -167,7 +173,13 @@ class OpenAICompatibleClient:
             raise self._http_error(status_code, content)
         return self._parse_response(content)
 
-    def build_payload(self, messages: list[AgentMessage], tools: list[dict[str, object]]) -> dict[str, object]:
+    def build_payload(
+        self,
+        messages: list[AgentMessage],
+        tools: list[dict[str, object]],
+        *,
+        tool_choice: Literal["auto", "none"] = "auto",
+    ) -> dict[str, object]:
         """Build the exact non-network request body for preflight and tests."""
 
         safe_tools = copy.deepcopy(tools)
@@ -180,7 +192,7 @@ class OpenAICompatibleClient:
             "model": self.model,
             "messages": [self._message_to_wire(message) for message in messages],
             "tools": safe_tools,
-            "tool_choice": "auto",
+            "tool_choice": tool_choice,
             "stream": False,
         }
         if self.thinking_mode is not None:
