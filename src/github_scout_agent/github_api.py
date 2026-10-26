@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import math
 import re
 import time
 from collections.abc import Callable, Mapping
@@ -34,6 +35,7 @@ GITHUB_SOURCE_HOST = "github.com"
 PART_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 DEFAULT_README_CHARS = 12_000
 DEFAULT_MAX_RETRIES = 1
+DEFAULT_FALLBACK_RETRY_DELAY = 1.0
 
 
 class GithubApiError(RuntimeError):
@@ -170,18 +172,24 @@ class GitHubRestClient:
         timeout: float = 5.0,
         max_retries: int = DEFAULT_MAX_RETRIES,
         sleep_fn: Callable[[float], None] = time.sleep,
+        now_fn: Callable[[], float] = time.time,
         max_retry_delay: float = 5.0,
+        fallback_retry_delay: float = DEFAULT_FALLBACK_RETRY_DELAY,
         readme_max_chars: int = DEFAULT_README_CHARS,
     ) -> None:
         if max_retries < 0:
             raise ValueError("max_retries cannot be negative")
+        if max_retry_delay < 0 or fallback_retry_delay <= 0:
+            raise ValueError("retry delays must be non-negative, with a positive fallback delay")
         if readme_max_chars <= 0:
             raise ValueError("readme_max_chars must be positive")
         self.budget = budget or RequestBudget()
         self._token = token
         self._max_retries = max_retries
         self._sleep = sleep_fn
+        self._now = now_fn
         self._max_retry_delay = max_retry_delay
+        self._fallback_retry_delay = fallback_retry_delay
         self._readme_max_chars = readme_max_chars
         headers = {
             "Accept": "application/vnd.github+json",
@@ -219,7 +227,28 @@ class GitHubRestClient:
             try:
                 self.budget.reserve_github_request()
                 headers = {"Accept": accept} if accept else None
-                response = self._client.get(path, params=params, headers=headers)
+                response_context = self._client.stream("GET", path, params=params, headers=headers)
+                with response_context as response:
+                    content_length = response.headers.get("content-length")
+                    if content_length and content_length.isdigit() and int(content_length) > self.budget.max_response_bytes:
+                        raise GithubApiError(
+                            "response_too_large", "budget", "GitHub response exceeds the response-size limit"
+                        )
+                    chunks: list[bytes] = []
+                    response_size = 0
+                    try:
+                        for chunk in response.iter_bytes():
+                            response_size += len(chunk)
+                            self.budget.record_response_chunk(len(chunk), response_size)
+                            chunks.append(chunk)
+                    except BudgetExceeded as exc:
+                        raise GithubApiError(
+                            "response_too_large", "budget", "GitHub response exceeds the response-size limit"
+                        ) from exc
+                    content = b"".join(chunks)
+                    status = response.status_code
+                    response_url = str(response.request.url)
+                    response_headers = response.headers
             except BudgetExceeded:
                 raise
             except httpx.TimeoutException as exc:
@@ -235,21 +264,9 @@ class GitHubRestClient:
                     "network_error", "network", "GitHub request failed", retryable=True, attempts=attempt
                 ) from exc
 
-            content_length = response.headers.get("content-length")
-            if content_length and content_length.isdigit() and int(content_length) > self.budget.max_response_bytes:
-                raise GithubApiError(
-                    "response_too_large", "budget", "GitHub response exceeds the response-size limit"
-                )
-            content = response.content
-            try:
-                self.budget.record_response_size(len(content))
-            except BudgetExceeded as exc:
-                raise GithubApiError("response_too_large", "budget", "GitHub response exceeds the response-size limit") from exc
-
-            status = response.status_code
             if 200 <= status < 300:
                 try:
-                    return response.json(), str(response.request.url), captured_at
+                    return json.loads(content), response_url, captured_at
                 except (json.JSONDecodeError, UnicodeDecodeError) as exc:
                     raise GithubApiError("invalid_json", "schema", "GitHub returned invalid JSON", attempts=attempt) from exc
 
@@ -261,10 +278,14 @@ class GitHubRestClient:
                 raise GithubApiError("validation_failed", "input", "GitHub rejected the request parameters", status_code=status, attempts=attempt)
 
             rate_limited = status == 429 or (
-                status == 403 and response.headers.get("x-ratelimit-remaining") == "0"
+                status == 403
+                and (
+                    response_headers.get("x-ratelimit-remaining") == "0"
+                    or "retry-after" in response_headers
+                )
             )
             if rate_limited:
-                delay = self._retry_delay(response.headers)
+                delay = self._rate_limit_delay(response_headers)
                 if attempt <= self._max_retries and delay <= self._max_retry_delay:
                     self._sleep(delay)
                     continue
@@ -284,14 +305,30 @@ class GitHubRestClient:
             )
         raise AssertionError("request loop must return or raise")
 
-    def _retry_delay(self, headers: Mapping[str, str]) -> float:
-        raw = headers.get("retry-after")
-        if raw is None:
-            return 0.0
-        try:
-            return max(float(raw), 0.0)
-        except ValueError:
-            return self._max_retry_delay + 1
+    def _rate_limit_delay(self, headers: Mapping[str, str]) -> float:
+        delays: list[float] = []
+        retry_after = headers.get("retry-after")
+        if retry_after is not None:
+            try:
+                parsed_retry_after = float(retry_after)
+                if math.isfinite(parsed_retry_after) and parsed_retry_after >= 0:
+                    delays.append(parsed_retry_after)
+            except ValueError:
+                pass
+
+        reset = headers.get("x-ratelimit-reset")
+        if reset is not None:
+            try:
+                reset_epoch = float(reset)
+                current_time = self._now()
+                if math.isfinite(reset_epoch) and reset_epoch > current_time:
+                    delays.append(reset_epoch - current_time)
+            except ValueError:
+                pass
+
+        if delays:
+            return max(delays)
+        return max(self._fallback_retry_delay, 0.0)
 
     def search_public_repositories(
         self,
@@ -318,8 +355,9 @@ class GitHubRestClient:
         if not isinstance(payload, Mapping) or not isinstance(payload.get("items"), list):
             raise GithubApiError("invalid_search_payload", "schema", "GitHub search response is missing items")
         raw_items = [item for item in payload["items"] if isinstance(item, Mapping)]
-        accepted_count, truncated = self.budget.take_candidates(len(raw_items))
-        items = [_normalize_repository(item, source_url, captured_at) for item in raw_items[:accepted_count]]
+        public_items = [item for item in raw_items if self._is_public_repository(item)]
+        accepted_count, truncated = self.budget.take_candidates(len(public_items))
+        items = [_normalize_repository(item, source_url, captured_at) for item in public_items[:accepted_count]]
         return SearchResult(
             items=items,
             total_count=payload.get("total_count") if isinstance(payload.get("total_count"), int) else None,
@@ -330,8 +368,13 @@ class GitHubRestClient:
             page=page,
             per_page=per_page,
             candidate_budget_truncated=truncated,
+            excluded_non_public_count=len(raw_items) - len(public_items),
             source=_source(source_url, captured_at),
         )
+
+    @staticmethod
+    def _is_public_repository(payload: Mapping[str, object]) -> bool:
+        return payload.get("private") is False and payload.get("visibility") == "public"
 
     def get_public_repository(self, *, owner: str, repo: str) -> RepositoryRecord:
         owner = validate_owner_repo_part(owner, "owner")
@@ -339,7 +382,7 @@ class GitHubRestClient:
         payload, source_url, captured_at = self._request_json(f"/repos/{owner}/{repo}")
         if not isinstance(payload, Mapping):
             raise GithubApiError("invalid_repository_payload", "schema", "GitHub repository response is not an object")
-        if payload.get("private") is True or payload.get("visibility") not in {None, "public"}:
+        if payload.get("private") is not False or payload.get("visibility") != "public":
             raise GithubApiError("private_repository_blocked", "safety", "private repositories are not supported")
         return _normalize_repository(payload, source_url, captured_at)
 

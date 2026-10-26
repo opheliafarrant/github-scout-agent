@@ -43,6 +43,7 @@ class ReadmeEvidence(BaseModel):
     content_size: int | None = Field(default=None, ge=0)
     truncated: bool = False
     sha: str | None = None
+    trust_label: Literal["untrusted_remote_text"] = "untrusted_remote_text"
     source: SourceRef | None = None
 
 
@@ -82,6 +83,7 @@ class SearchResult(BaseModel):
     page: int = Field(ge=1)
     per_page: int = Field(ge=1)
     candidate_budget_truncated: bool = False
+    excluded_non_public_count: int = Field(default=0, ge=0)
     source: SourceRef
 
 

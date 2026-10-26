@@ -100,6 +100,7 @@ def test_readme_is_decoded_and_truncated() -> None:
     assert result.ok is True
     assert result.data.status == "truncated"
     assert result.data.truncated is True
+    assert result.data.trust_label == "untrusted_remote_text"
     assert result.data.content == readme[:10]
     assert result.data.source.url.startswith("https://api.github.com/")
 
@@ -151,20 +152,21 @@ def test_combined_languages_topics_counts_two_real_requests() -> None:
 def test_rate_limit_retry_is_bounded_and_counted() -> None:
     seen: list[httpx.Request] = []
     calls = 0
+    sleeps: list[float] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         nonlocal calls
         calls += 1
         if calls == 1:
-            return _response(request, 429, {"message": "rate limited"}, {"retry-after": "0"})
+            return _response(request, 429, {"message": "rate limited"}, {"retry-after": "2"})
         return _response(request, 200, {"total_count": 0, "incomplete_results": False, "items": []})
 
     budget = RequestBudget(max_github_requests=2)
     with GitHubRestClient(
         budget=budget,
         transport=_transport(handler, seen),
-        sleep_fn=lambda _: None,
-        max_retry_delay=0,
+        sleep_fn=sleeps.append,
+        max_retry_delay=5,
     ) as client:
         result = build_github_tool_registry(client).dispatch(
             "search_public_repositories", {"query": "retry"}
@@ -174,6 +176,122 @@ def test_rate_limit_retry_is_bounded_and_counted() -> None:
     assert result.request_count == 2
     assert calls == 2
     assert budget.github_requests_used == 2
+    assert sleeps == [2.0]
+
+
+def test_primary_rate_limit_future_reset_beyond_wait_limit_does_not_retry() -> None:
+    seen: list[httpx.Request] = []
+    sleeps: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _response(
+            request,
+            403,
+            {"message": "rate limited"},
+            {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "1060"},
+        )
+
+    with GitHubRestClient(
+        transport=_transport(handler, seen),
+        now_fn=lambda: 1000.0,
+        sleep_fn=sleeps.append,
+        max_retry_delay=5,
+    ) as client:
+        result = build_github_tool_registry(client).dispatch(
+            "search_public_repositories", {"query": "primary-limit"}
+        )
+
+    assert result.ok is False
+    assert result.error.code == "rate_limited"
+    assert result.request_count == 1
+    assert sleeps == []
+    assert len(seen) == 1
+
+
+def test_primary_rate_limit_reset_within_limit_retries_after_reset_delay() -> None:
+    seen: list[httpx.Request] = []
+    sleeps: list[float] = []
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return _response(
+                request,
+                403,
+                {"message": "rate limited"},
+                {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "1002"},
+            )
+        return _response(request, 200, {"total_count": 0, "incomplete_results": False, "items": []})
+
+    with GitHubRestClient(
+        transport=_transport(handler, seen),
+        now_fn=lambda: 1000.0,
+        sleep_fn=sleeps.append,
+        max_retry_delay=5,
+    ) as client:
+        result = build_github_tool_registry(client).dispatch(
+            "search_public_repositories", {"query": "reset"}
+        )
+
+    assert result.ok is True
+    assert result.request_count == 2
+    assert sleeps == [2.0]
+
+
+@pytest.mark.parametrize("reset_value", [None, "not-a-timestamp", "999"])
+def test_invalid_missing_or_past_reset_uses_safe_fallback_delay(reset_value: str | None) -> None:
+    seen: list[httpx.Request] = []
+    sleeps: list[float] = []
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            headers = {"x-ratelimit-remaining": "0"}
+            if reset_value is not None:
+                headers["x-ratelimit-reset"] = reset_value
+            return _response(request, 403, {"message": "rate limited"}, headers)
+        return _response(request, 200, {"total_count": 0, "incomplete_results": False, "items": []})
+
+    with GitHubRestClient(
+        transport=_transport(handler, seen),
+        now_fn=lambda: 1000.0,
+        sleep_fn=sleeps.append,
+        max_retry_delay=2,
+        fallback_retry_delay=1,
+    ) as client:
+        result = build_github_tool_registry(client).dispatch(
+            "search_public_repositories", {"query": "fallback"}
+        )
+
+    assert result.ok is True
+    assert result.request_count == 2
+    assert sleeps == [1.0]
+
+
+def test_rate_limit_retry_cannot_bypass_request_budget() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _response(request, 429, {"message": "rate limited"}, {"retry-after": "0"})
+
+    budget = RequestBudget(max_github_requests=1)
+    with GitHubRestClient(
+        budget=budget,
+        transport=_transport(handler, seen),
+        sleep_fn=lambda _: None,
+    ) as client:
+        result = build_github_tool_registry(client).dispatch(
+            "search_public_repositories", {"query": "budget"}
+        )
+
+    assert result.ok is False
+    assert result.error.code == "budget_exceeded"
+    assert result.request_count == 1
+    assert len(seen) == 1
 
 
 def test_response_size_budget_blocks_large_response() -> None:
@@ -192,6 +310,29 @@ def test_response_size_budget_blocks_large_response() -> None:
     assert result.error.code == "response_too_large"
     assert result.request_count == 1
     assert budget.github_requests_used == 1
+
+
+def test_streaming_response_without_content_length_stops_during_read() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            stream=httpx.ByteStream(b"{" + b"x" * 100),
+            headers={"content-type": "application/json"},
+            request=request,
+        )
+
+    budget = RequestBudget(max_response_bytes=10)
+    with GitHubRestClient(budget=budget, transport=_transport(handler, seen)) as client:
+        result = build_github_tool_registry(client).dispatch(
+            "search_public_repositories", {"query": "stream"}
+        )
+
+    assert result.ok is False
+    assert result.error.code == "response_too_large"
+    assert result.request_count == 1
+    assert budget.response_bytes_used > budget.max_response_bytes
 
 
 @pytest.mark.parametrize(
@@ -295,6 +436,61 @@ def test_candidate_budget_truncates_search_items_without_fabricating_fields() ->
     assert len(result.data.items) == 1
     assert result.data.candidate_budget_truncated is True
     assert budget.candidates_used == 1
+
+
+def test_search_filters_non_public_candidates_before_candidate_budget() -> None:
+    seen: list[httpx.Request] = []
+    private = _repo("octo/private")
+    private["private"] = True
+    contradictory = _repo("octo/contradictory")
+    contradictory["visibility"] = "private"
+    missing_publicity = _repo("octo/missing-publicity")
+    missing_publicity.pop("private")
+    missing_publicity.pop("visibility")
+    public = _repo("octo/public")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _response(
+            request,
+            200,
+            {"total_count": 4, "items": [private, contradictory, missing_publicity, public]},
+        )
+
+    budget = RequestBudget(max_candidates=1)
+    with GitHubRestClient(budget=budget, transport=_transport(handler, seen)) as client:
+        result = build_github_tool_registry(client).dispatch(
+            "search_public_repositories", {"query": "public"}
+        )
+
+    assert result.ok is True
+    assert [item.full_name for item in result.data.items] == ["octo/public"]
+    assert result.data.excluded_non_public_count == 3
+    assert result.data.candidate_budget_truncated is False
+    assert budget.candidates_used == 1
+
+
+@pytest.mark.parametrize(
+    ("private", "visibility"),
+    [(True, "public"), (False, "private"), (None, "public"), (False, None)],
+)
+def test_single_repository_requires_explicit_publicity(private: bool | None, visibility: str | None) -> None:
+    seen: list[httpx.Request] = []
+    payload = _repo("octo/restricted")
+    payload["private"] = private
+    payload["visibility"] = visibility
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _response(request, 200, payload)
+
+    with GitHubRestClient(transport=_transport(handler, seen)) as client:
+        result = build_github_tool_registry(client).dispatch(
+            "get_public_repository", {"owner": "octo", "repo": "restricted"}
+        )
+
+    assert result.ok is False
+    assert result.error.code == "private_repository_blocked"
+    assert result.error.category == "safety"
+    assert len(seen) == 1
 
 
 def test_fixed_host_and_public_url_validation() -> None:

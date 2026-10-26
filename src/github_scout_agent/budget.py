@@ -36,12 +36,15 @@ class RequestBudget:
         self.github_requests_used += 1
 
     def record_response_size(self, size: int) -> None:
-        if size < 0:
+        self.record_response_chunk(size, size)
+
+    def record_response_chunk(self, size: int, response_size_so_far: int) -> None:
+        if size < 0 or response_size_so_far < 0:
             raise ValueError("response size cannot be negative")
         self.response_bytes_used += size
-        if size > self.max_response_bytes:
+        if response_size_so_far > self.max_response_bytes:
             self._dimensions_exhausted.add("response_bytes")
-            raise BudgetExceeded("response_bytes", self.max_response_bytes, size)
+            raise BudgetExceeded("response_bytes", self.max_response_bytes, response_size_so_far)
 
     def take_candidates(self, count: int) -> tuple[int, bool]:
         if count < 0:
