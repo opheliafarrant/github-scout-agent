@@ -456,7 +456,51 @@ def test_t29_missing_candidate_readme_forces_partial_evidence_status() -> None:
     assert budget.github_requests_used == 2
 
 
-def test_t34_three_search_batch_continues_to_readme_and_finalization() -> None:
+@pytest.mark.parametrize("required_language", [None, "", "   "])
+def test_capacity_blocked_batch_reaches_next_model_without_evidence_policy(required_language: str | None) -> None:
+    calls = [
+        ToolCall(id=f"search-{index}", name="search_public_repositories", arguments=json.dumps({"query": f"agent {index}"}))
+        for index in range(3)
+    ]
+
+    class RecordingModel(ScriptedMockLLM):
+        def __init__(self) -> None:
+            super().__init__([
+                AssistantResponse(tool_calls=calls),
+                AssistantResponse(content="Recommendation based on the returned candidates."),
+            ])
+            self.history = []
+
+        def complete(self, messages, tools, *, tool_choice="auto"):
+            self.history.append(list(messages))
+            return super().complete(messages, tools, tool_choice=tool_choice)
+
+    model = RecordingModel()
+    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=20_000)
+    with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_full_pool_handler), max_retries=0) as client:
+        result = AgentLoop(
+            model=model,
+            tools=build_github_tool_registry(client),
+            budget=budget,
+            config=AgentLoopConfig(finalization_reserve_calls=1, required_language=required_language),
+        ).run("find agent repositories")
+
+    assert result.status == "completed"
+    assert result.termination_reason == "model_completed"
+    assert result.final_text == "Recommendation based on the returned candidates."
+    assert model.calls == budget.model_calls_used == 2
+    assert budget.github_requests_used == 1
+    assert budget.candidates_used == 3
+    tool_messages = [message for message in model.history[1] if message.role == "tool"]
+    assert [message.tool_call_id for message in tool_messages] == [call.id for call in calls]
+    payloads = [json.loads(message.content) for message in tool_messages]
+    assert payloads[0]["ok"] is True
+    assert [payload["error"]["code"] for payload in payloads[1:]] == ["candidate_capacity_full"] * 2
+    assert [payload["request_count"] for payload in payloads] == [1, 0, 0]
+
+
+@pytest.mark.parametrize("missing_readme", [False, True])
+def test_t34_three_search_batch_continues_to_readme_and_finalization(missing_readme: bool) -> None:
     search_calls = [
         ToolCall(
             id=f"search-{index}",
@@ -478,11 +522,17 @@ def test_t34_three_search_batch_continues_to_readme_and_finalization() -> None:
         AssistantResponse(tool_calls=readme_calls),
         AssistantResponse(content="Final comparison with README-backed evidence."),
     ])
-    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=20_000)
+    def handler(request: httpx.Request) -> httpx.Response:
+        if missing_readme and request.url.path == "/repos/octo/python-1/readme":
+            return httpx.Response(404, json={"message": "Not Found"}, request=request)
+        return _t29_python_evidence_handler(request)
+
+    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=3 if missing_readme else 5, max_feedback_bytes=20_000)
     with GitHubRestClient(
         budget=budget,
         required_language="Python",
-        transport=httpx.MockTransport(_t29_python_evidence_handler),
+        transport=httpx.MockTransport(handler),
+        max_retries=0,
     ) as client:
         result = AgentLoop(
             model=mock,
@@ -497,10 +547,21 @@ def test_t34_three_search_batch_continues_to_readme_and_finalization() -> None:
 
     assert result.status == "completed"
     assert result.termination_reason == "model_finalized"
-    assert result.evidence_complete is True
-    assert result.evidence_gaps == []
+    assert result.evidence_complete is (not missing_readme)
+    assert result.evidence_gaps == (["README evidence unavailable: octo/python-1"] if missing_readme else [])
     assert mock.tool_choices == ["auto", "auto", "none"]
     assert budget.github_requests_used == 4
+    assert budget.model_calls_used == 3
+    assert budget.candidates_used == 3
+    assert [item.error.code if item.error else None for item in result.tool_results[:3]] == [
+        None, "candidate_capacity_full", "candidate_capacity_full",
+    ]
+    assert [item.request_count for item in result.tool_results] == [1, 0, 0, 1, 1, 1]
+    assert all(item.data.trust_label == "untrusted_remote_text" for item in result.tool_results[3:])
+    from github_scout_agent.application import render_mvp_report
+
+    report = render_mvp_report("find small Python agent repositories with native tool calling", result)
+    assert f"Completeness: {'partial' if missing_readme else 'complete'}" in report
     assert [message.tool_call_id for message in result.messages if message.role == "tool"] == [
         call.id for call in search_calls + readme_calls
     ]
@@ -528,11 +589,42 @@ def test_full_candidate_capacity_blocks_new_search_but_allows_accepted_followup(
     assert budget.candidates_used == 3
 
 
-def test_repeated_capacity_blocked_searches_terminate_without_network() -> None:
+def test_three_search_batch_with_no_model_budget_returns_partial() -> None:
+    calls = [
+        ToolCall(id=f"search-{index}", name="search_public_repositories", arguments=json.dumps({"query": f"python {index}"}))
+        for index in range(3)
+    ]
+    model = ScriptedMockLLM([AssistantResponse(tool_calls=calls)])
+    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=1, max_feedback_bytes=20_000)
+    with GitHubRestClient(
+        budget=budget,
+        required_language="Python",
+        transport=httpx.MockTransport(_t29_python_evidence_handler),
+        max_retries=0,
+    ) as client:
+        result = AgentLoop(
+            model=model,
+            tools=build_github_tool_registry(client),
+            budget=budget,
+            config=AgentLoopConfig(finalization_reserve_calls=1, required_language="Python", require_candidate_readme=True),
+        ).run("find small Python agent repositories with native tool calling")
+
+    assert result.status == "terminated"
+    assert result.termination_reason == "model_calls"
+    assert model.calls == budget.model_calls_used == 1
+    assert budget.github_requests_used == 1
+    assert result.evidence_complete is False
+    assert len(result.evidence_gaps) == 3
+    assert [message.tool_call_id for message in result.messages if message.role == "tool"] == [call.id for call in calls]
+    from github_scout_agent.application import render_mvp_report
+
+    assert "Completeness: partial" in render_mvp_report("find Python agents", result)
+
+
+def test_repeated_capacity_blocked_searches_stop_at_model_budget_without_more_network() -> None:
     responses = [
-        AssistantResponse(tool_calls=[ToolCall(id="search-1", name="search_public_repositories", arguments=json.dumps({"query": "first"}))]),
-        AssistantResponse(tool_calls=[ToolCall(id="search-2", name="search_public_repositories", arguments=json.dumps({"query": "second"}))]),
-        AssistantResponse(tool_calls=[ToolCall(id="search-3", name="search_public_repositories", arguments=json.dumps({"query": "third"}))]),
+        AssistantResponse(tool_calls=[ToolCall(id=f"search-{index}", name="search_public_repositories", arguments=json.dumps({"query": f"query {index}"}))])
+        for index in range(5)
     ]
     budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=20_000)
     with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_full_pool_handler)) as client:
@@ -543,16 +635,19 @@ def test_repeated_capacity_blocked_searches_terminate_without_network() -> None:
         ).run("stop repeated search")
 
     assert result.status == "terminated"
-    assert result.termination_reason == "candidate_capacity_full"
+    assert result.termination_reason == "model_calls"
+    assert budget.model_calls_used == 5
     assert budget.github_requests_used == 1
+    assert [message.tool_call_id for message in result.messages if message.role == "tool"] == [
+        f"search-{index}" for index in range(5)
+    ]
 
 
 @pytest.mark.parametrize("empty_language", ["", "   "])
-def test_empty_required_language_keeps_repeated_search_safety_stop(empty_language: str) -> None:
+def test_empty_required_language_keeps_model_budget_safety_stop(empty_language: str) -> None:
     responses = [
-        AssistantResponse(tool_calls=[ToolCall(id="search-1", name="search_public_repositories", arguments=json.dumps({"query": "first"}))]),
-        AssistantResponse(tool_calls=[ToolCall(id="search-2", name="search_public_repositories", arguments=json.dumps({"query": "second"}))]),
-        AssistantResponse(tool_calls=[ToolCall(id="search-3", name="search_public_repositories", arguments=json.dumps({"query": "third"}))]),
+        AssistantResponse(tool_calls=[ToolCall(id=f"search-{index}", name="search_public_repositories", arguments=json.dumps({"query": f"query {index}"}))])
+        for index in range(5)
     ]
     budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=20_000)
     with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_full_pool_handler)) as client:
@@ -564,7 +659,8 @@ def test_empty_required_language_keeps_repeated_search_safety_stop(empty_languag
         ).run("repeat empty language policy")
 
     assert result.status == "terminated"
-    assert result.termination_reason == "candidate_capacity_full"
+    assert result.termination_reason == "model_calls"
+    assert budget.model_calls_used == 5
     assert budget.github_requests_used == 1
 
 
