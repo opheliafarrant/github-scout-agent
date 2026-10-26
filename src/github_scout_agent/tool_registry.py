@@ -83,6 +83,36 @@ class ToolRegistry:
     def schemas(self) -> list[dict[str, Any]]:
         return [definition.schema() for definition in self._definitions.values()]
 
+    def candidate_access_allowed(self, name: str, arguments: str | dict[str, Any]) -> bool:
+        """When candidate capacity is full, allow evidence only for accepted IDs."""
+
+        if name not in {
+            "get_public_repository",
+            "get_public_readme",
+            "get_repository_license",
+            "get_repository_languages_and_topics",
+        }:
+            return True
+        definition = self._definitions.get(name)
+        client = getattr(definition.handler, "client", None) if definition else None
+        if client is None or not client.budget.candidates_full:
+            return True
+        raw_arguments = arguments
+        if isinstance(arguments, str):
+            try:
+                raw_arguments = json.loads(arguments)
+            except json.JSONDecodeError:
+                return True
+        if not isinstance(raw_arguments, dict):
+            return True
+        try:
+            validated = definition.arguments_model.model_validate(raw_arguments)
+        except ValidationError:
+            return True
+        values = validated.model_dump()
+        identity = f"{values['owner']}/{values['repo']}"
+        return client.budget.is_candidate_accepted(identity)
+
     def dispatch(self, name: str, arguments: str | dict[str, Any]) -> ToolResult:
         definition = self._definitions.get(name)
         if definition is None:

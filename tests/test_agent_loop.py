@@ -61,6 +61,25 @@ def _search_or_readme_handler(request: httpx.Request, *, archived: bool = False)
     return httpx.Response(404, json={"message": "Not Found"}, request=request)
 
 
+def _full_pool_handler(request: httpx.Request) -> httpx.Response:
+    if request.url.path == "/search/repositories":
+        return httpx.Response(
+            200,
+            json={"total_count": 10, "items": [_repo() | {"full_name": f"octo/repo-{index}"} for index in range(10)]},
+            request=request,
+        )
+    if request.url.path.endswith("/readme"):
+        content = "accepted README"
+        return httpx.Response(
+            200,
+            json={"encoding": "base64", "content": base64.b64encode(content.encode()).decode(), "size": len(content)},
+            request=request,
+        )
+    if request.url.path.endswith("/license"):
+        return httpx.Response(404, json={"message": "Not Found"}, request=request)
+    return httpx.Response(404, json={"message": "Not Found"}, request=request)
+
+
 def test_empty_search_feedback_drives_query_rewrite_and_completion() -> None:
     requests: list[httpx.Request] = []
 
@@ -106,6 +125,69 @@ def test_candidate_feedback_drives_readme_followup() -> None:
     ]
     readme_result = result.tool_results[1]
     assert readme_result.data.trust_label == "untrusted_remote_text"
+
+
+def test_full_candidate_capacity_does_not_block_readme_followup_for_accepted_repo() -> None:
+    budget = RequestBudget(max_candidates=5, max_github_requests=5, max_model_calls=5, max_feedback_bytes=20_000)
+    with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_full_pool_handler)) as client:
+        result = AgentLoop(
+            model=ScenarioMockLLM("readme_followup"),
+            tools=build_github_tool_registry(client),
+            budget=budget,
+        ).run("find agents")
+
+    assert result.status == "completed"
+    assert budget.candidates_used == 5
+    assert "candidates" in budget.exhausted_dimensions
+    assert result.tool_results[1].tool_name == "get_public_readme"
+    assert result.tool_results[1].ok is True
+
+
+def test_full_candidate_capacity_does_not_block_license_followup_for_accepted_repo() -> None:
+    budget = RequestBudget(max_candidates=5, max_github_requests=5, max_model_calls=5, max_feedback_bytes=20_000)
+    with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_full_pool_handler)) as client:
+        result = AgentLoop(
+            model=ScenarioMockLLM("license_followup"),
+            tools=build_github_tool_registry(client),
+            budget=budget,
+        ).run("find agents")
+
+    assert result.status == "completed"
+    assert result.tool_results[1].tool_name == "get_repository_license"
+    assert result.tool_results[1].data.status == "unknown"
+
+
+def test_unaccepted_candidate_cannot_enter_evidence_via_readme_when_pool_is_full() -> None:
+    readme_requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/readme"):
+            readme_requests.append(request)
+        return _full_pool_handler(request)
+
+    search = AssistantResponse(
+        tool_calls=[ToolCall(id="search", name="search_public_repositories", arguments=json.dumps({"query": "x"}))]
+    )
+    outsider_readme = AssistantResponse(
+        tool_calls=[
+            ToolCall(
+                id="outsider-readme",
+                name="get_public_readme",
+                arguments=json.dumps({"owner": "octo", "repo": "not-accepted"}),
+            )
+        ]
+    )
+    budget = RequestBudget(max_candidates=5, max_github_requests=5, max_model_calls=5, max_feedback_bytes=20_000)
+    with GitHubRestClient(budget=budget, transport=httpx.MockTransport(handler)) as client:
+        result = AgentLoop(
+            model=ScriptedMockLLM([search, outsider_readme, AssistantResponse(content="stopped")]),
+            tools=build_github_tool_registry(client),
+            budget=budget,
+        ).run("inspect")
+
+    assert result.status == "completed"
+    assert result.tool_results[1].error.code == "candidate_not_accepted"
+    assert readme_requests == []
 
 
 def test_missing_license_remains_unknown_after_followup() -> None:
@@ -180,7 +262,7 @@ def test_duplicate_tool_call_id_is_blocked_without_second_execution() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        return httpx.Response(200, json={"total_count": 0, "items": []}, request=request)
+        return httpx.Response(200, json={"total_count": 1, "items": [_repo()]}, request=request)
 
     response = AssistantResponse(
         tool_calls=[
@@ -253,13 +335,13 @@ def test_model_call_budget_stops_before_next_model_request() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        return httpx.Response(200, json={"total_count": 0, "items": []}, request=request)
+        return httpx.Response(200, json={"total_count": 1, "items": [_repo()]}, request=request)
 
     first = AssistantResponse(
         tool_calls=[ToolCall(id="search", name="search_public_repositories", arguments=json.dumps({"query": "x"}))]
     )
     model = ScriptedMockLLM([first, AssistantResponse(content="must not be requested")])
-    budget = RequestBudget(max_github_requests=5, max_model_calls=1, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_github_requests=5, max_candidates=1, max_model_calls=1, max_feedback_bytes=20_000)
     with _client(handler, budget) as client:
         result = AgentLoop(model=model, tools=build_github_tool_registry(client), budget=budget).run("budget")
 
@@ -273,7 +355,7 @@ def test_github_request_budget_stops_before_next_tool_and_model() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return _search_or_readme_handler(request)
 
-    budget = RequestBudget(max_github_requests=1, max_model_calls=5, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_github_requests=1, max_candidates=1, max_model_calls=5, max_feedback_bytes=20_000)
     with _client(handler, budget) as client:
         result = AgentLoop(
             model=ScenarioMockLLM("readme_followup"),

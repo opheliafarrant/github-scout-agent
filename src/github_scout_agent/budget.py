@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 import time
 
 
@@ -31,6 +31,7 @@ class RequestBudget:
     github_requests_used: int = 0
     response_bytes_used: int = 0
     candidates_used: int = 0
+    accepted_candidate_ids: set[str] = field(default_factory=set)
     model_calls_used: int = 0
     feedback_bytes_used: int = 0
     task_started_at: float | None = None
@@ -93,23 +94,53 @@ class RequestBudget:
     def take_candidates(self, count: int) -> tuple[int, bool]:
         if count < 0:
             raise ValueError("candidate count cannot be negative")
+        anonymous_ids = [f"__anonymous_candidate_{self.candidates_used + index}" for index in range(count)]
+        accepted_ids, truncated = self.take_candidate_ids(anonymous_ids)
+        return len(accepted_ids), truncated
+
+    def take_candidate_ids(self, candidate_ids: Iterable[str]) -> tuple[list[str], bool]:
+        """Accept unique candidate identities without counting repeats twice."""
+
+        ordered_unique: list[str] = []
+        seen: set[str] = set()
+        for candidate_id in candidate_ids:
+            normalized = candidate_id.casefold()
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                ordered_unique.append(normalized)
+
+        new_ids = [candidate_id for candidate_id in ordered_unique if candidate_id not in self.accepted_candidate_ids]
         remaining = max(self.max_candidates - self.candidates_used, 0)
-        accepted = min(count, remaining)
-        self.candidates_used += accepted
-        truncated = accepted < count
+        accepted_new = new_ids[:remaining]
+        self.accepted_candidate_ids.update(accepted_new)
+        self.candidates_used += len(accepted_new)
+        truncated = len(accepted_new) < len(new_ids)
         if truncated:
             self._dimensions_exhausted.add("candidates")
+        accepted = [candidate_id for candidate_id in ordered_unique if candidate_id in self.accepted_candidate_ids]
         return accepted, truncated
+
+    def is_candidate_accepted(self, candidate_id: str) -> bool:
+        return candidate_id.casefold() in self.accepted_candidate_ids
+
+    @property
+    def candidates_full(self) -> bool:
+        return self.candidates_used >= self.max_candidates
 
     @property
     def exhausted_dimensions(self) -> tuple[str, ...]:
         return tuple(sorted(self._dimensions_exhausted))
+
+    @property
+    def fatal_exhausted_dimensions(self) -> tuple[str, ...]:
+        return tuple(sorted(dimension for dimension in self._dimensions_exhausted if dimension != "candidates"))
 
     def snapshot(self) -> dict[str, object]:
         return {
             "github_requests_used": self.github_requests_used,
             "response_bytes_used": self.response_bytes_used,
             "candidates_used": self.candidates_used,
+            "accepted_candidate_count": len(self.accepted_candidate_ids),
             "model_calls_used": self.model_calls_used,
             "feedback_bytes_used": self.feedback_bytes_used,
             "elapsed_seconds": self.elapsed_seconds(),
@@ -120,4 +151,5 @@ class RequestBudget:
             "max_task_seconds": self.max_task_seconds,
             "max_feedback_bytes": self.max_feedback_bytes,
             "exhausted_dimensions": self.exhausted_dimensions,
+            "fatal_exhausted_dimensions": self.fatal_exhausted_dimensions,
         }

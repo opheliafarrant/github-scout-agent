@@ -438,6 +438,67 @@ def test_candidate_budget_truncates_search_items_without_fabricating_fields() ->
     assert budget.candidates_used == 1
 
 
+def test_search_accepts_no_more_than_candidate_capacity() -> None:
+    seen: list[httpx.Request] = []
+    items = [_repo(f"octo/repo-{index}") for index in range(10)]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _response(request, 200, {"total_count": 10, "items": items})
+
+    budget = RequestBudget(max_candidates=5)
+    with GitHubRestClient(budget=budget, transport=_transport(handler, seen)) as client:
+        result = build_github_tool_registry(client).dispatch(
+            "search_public_repositories", {"query": "capacity"}
+        )
+
+    assert result.ok is True
+    assert len(result.data.items) == 5
+    assert result.data.candidate_budget_truncated is True
+    assert budget.candidates_used == 5
+
+
+def test_duplicate_repository_does_not_consume_candidate_capacity_twice() -> None:
+    seen: list[httpx.Request] = []
+    duplicate_items = [_repo("octo/same") for _ in range(10)]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _response(request, 200, {"total_count": 10, "items": duplicate_items})
+
+    budget = RequestBudget(max_candidates=5)
+    with GitHubRestClient(budget=budget, transport=_transport(handler, seen)) as client:
+        result = build_github_tool_registry(client).dispatch(
+            "search_public_repositories", {"query": "duplicate"}
+        )
+
+    assert result.ok is True
+    assert len(result.data.items) == 1
+    assert result.data.candidate_budget_truncated is False
+    assert budget.candidates_used == 1
+
+
+def test_later_search_cannot_add_a_new_candidate_after_capacity_is_full() -> None:
+    seen: list[httpx.Request] = []
+    first_items = [_repo(f"octo/repo-{index}") for index in range(5)]
+    second_items = [_repo("octo/repo-new")]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = first_items if request.url.params.get("q") == "first" else second_items
+        return _response(request, 200, {"total_count": len(payload), "items": payload})
+
+    budget = RequestBudget(max_candidates=5)
+    with GitHubRestClient(budget=budget, transport=_transport(handler, seen)) as client:
+        registry = build_github_tool_registry(client)
+        first = registry.dispatch("search_public_repositories", {"query": "first"})
+        second = registry.dispatch("search_public_repositories", {"query": "second"})
+
+    assert first.ok is True
+    assert second.ok is True
+    assert len(first.data.items) == 5
+    assert second.data.items == []
+    assert second.data.candidate_budget_truncated is True
+    assert budget.candidates_used == 5
+
+
 def test_search_filters_non_public_candidates_before_candidate_budget() -> None:
     seen: list[httpx.Request] = []
     private = _repo("octo/private")

@@ -138,9 +138,9 @@ class AgentLoop:
                 if result.error and result.error.category == "budget":
                     should_stop = True
                     termination_reason = result.error.code
-                if self.budget.exhausted_dimensions:
+                if self.budget.fatal_exhausted_dimensions:
                     should_stop = True
-                    termination_reason = self.budget.exhausted_dimensions[-1]
+                    termination_reason = self.budget.fatal_exhausted_dimensions[-1]
                 if should_stop:
                     for remaining in response.tool_calls[index + 1 :]:
                         blocked = self._blocked_result(remaining, "not_executed_after_stop", "tool was not executed after safe stop")
@@ -160,6 +160,12 @@ class AgentLoop:
             self.budget.check_task_time()
         except BudgetExceeded as exc:
             return self._blocked_result(call, exc.dimension, str(exc))
+        if not self.tools.candidate_access_allowed(call.name, call.arguments):
+            return self._blocked_result(
+                call,
+                "candidate_not_accepted",
+                "candidate capacity is full; evidence access is limited to accepted candidates",
+            )
         result = self.tools.dispatch(call.name, call.arguments)
         if result.error and result.error.code in {
             "unknown_tool",
@@ -205,10 +211,17 @@ class AgentLoop:
         *,
         request_count: int = 0,
     ) -> ToolResult:
+        category = (
+            "budget"
+            if code in {"task_time", "feedback_bytes"}
+            else "safety"
+            if code == "candidate_not_accepted"
+            else "protocol"
+        )
         return ToolResult(
             tool_name=call.name,
             ok=False,
-            error=ToolError(code=code, category="budget" if code in {"task_time", "feedback_bytes"} else "protocol", message=message),
+            error=ToolError(code=code, category=category, message=message),
             request_count=request_count,
         )
 

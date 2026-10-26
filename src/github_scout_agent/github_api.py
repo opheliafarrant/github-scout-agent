@@ -355,9 +355,23 @@ class GitHubRestClient:
         if not isinstance(payload, Mapping) or not isinstance(payload.get("items"), list):
             raise GithubApiError("invalid_search_payload", "schema", "GitHub search response is missing items")
         raw_items = [item for item in payload["items"] if isinstance(item, Mapping)]
-        public_items = [item for item in raw_items if self._is_public_repository(item)]
-        accepted_count, truncated = self.budget.take_candidates(len(public_items))
-        items = [_normalize_repository(item, source_url, captured_at) for item in public_items[:accepted_count]]
+        public_items: list[Mapping[str, object]] = []
+        seen_ids: set[str] = set()
+        for item in raw_items:
+            identity = self._candidate_identity(item)
+            if self._is_public_repository(item) and identity and identity not in seen_ids:
+                seen_ids.add(identity)
+                public_items.append(item)
+        candidate_ids = [self._candidate_identity(item) for item in public_items]
+        accepted_ids, truncated = self.budget.take_candidate_ids(
+            [candidate_id for candidate_id in candidate_ids if candidate_id is not None]
+        )
+        accepted_id_set = set(accepted_ids)
+        items = [
+            _normalize_repository(item, source_url, captured_at)
+            for item in public_items
+            if self._candidate_identity(item) in accepted_id_set
+        ]
         return SearchResult(
             items=items,
             total_count=payload.get("total_count") if isinstance(payload.get("total_count"), int) else None,
@@ -375,6 +389,11 @@ class GitHubRestClient:
     @staticmethod
     def _is_public_repository(payload: Mapping[str, object]) -> bool:
         return payload.get("private") is False and payload.get("visibility") == "public"
+
+    @staticmethod
+    def _candidate_identity(payload: Mapping[str, object]) -> str | None:
+        full_name = payload.get("full_name")
+        return full_name.casefold() if isinstance(full_name, str) and full_name else None
 
     def get_public_repository(self, *, owner: str, repo: str) -> RepositoryRecord:
         owner = validate_owner_repo_part(owner, "owner")
