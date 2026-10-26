@@ -2,8 +2,8 @@
 
 ## 1. Task Foundation
 - True Goal: 建立可回退、可测试的 GitHub Scout Agent Python 工程基础和只读工具系统，并按阶段推进受限 Agent Loop 开发。
-- Current Stage: S5-03 MVP 主线收敛与最终验收准备（离线完成）
-- Active Mainline: T15-P0: 补齐真实 CLI `run` 装配、证据报告和 MockTransport 端到端接线；真实模型/GitHub 端到端仍待单独授权。
+- Current Stage: T16-P0 最终真实 MVP 端到端验收准备（离线完成）
+- Active Mainline: T16-P0: 核实生产 `run` 装配、预算/安全边界和离线业务闭环；真实端到端仍待用户单独授权。
 
 ## 2. Frozen Baselines and Inline Evidence
 - F1 Fact Baseline:
@@ -39,6 +39,7 @@
   - F1-30: Gate B 一次性记录显示模型请求 1 次、GitHub 请求 0、结果 `network_error`、估算累计费用 ¥0.34225、actual usage/cost unknown；无自动重试。
   - F1-31: S5-03 前物理检查确认 CLI 原先没有自然语言生产 `run` 命令，只有 Mock/Gate 入口；这是实际 MVP 接线缺口。
   - F1-32: S5-03 离线修复后，`run <task>` 必须带 `--confirm-live`；未确认返回 exit code 2 且不联网；Mock 应用装配和证据报告测试通过；默认 pytest 实际结果为 101 passed、1 deselected。
+  - F1-33: T16-P0 静态与离线核验：生产 `run` 使用现有 ModelClient/AgentLoop/ToolRegistry/GitHubClient；真实路径 GitHub max_retries=0；来源报告包含候选 URL、API 来源、缺失项、预算、终止和模型解释分离；默认 pytest 仍为 101 passed、1 deselected。
 - F2 Decision Baseline:
   - F2-01 (D1): MVP 采用 CLI；本地 Web UI 后置；Windows 桌面应用不属于 MVP。
   - F2-02 (D2): 支持无 Token 和用户自配只读 Token；只读公开仓库；不支持私有仓库、账户管理和任何 GitHub 写操作；Token 不进入模型、报告、普通日志或版本控制。
@@ -58,13 +59,14 @@
   - F3-10: Gate A-P1 实施提交：1c42f854983b936c89ad5f14a26dd541fd0e3488 (`test: add offline deepseek gate a preflight`)；未调用真实模型 API。
   - F3-11: Gate A 受控在线入口提交：fabec37eff1a68d1af0a1f87474ba45bf2a51b6b (`feat: add controlled online gate a`)；仅完成前置阻断验证，未调用真实模型 API。
   - F3-12: S5-03 MVP 运行入口提交：fdb5d7c074b3754f2c0c846c0ed9923e3d2c9fd9 (`feat: add confirmed cli mvp run path`)；仅离线验证，未调用真实模型或 GitHub API。
+  - F3-13: T16-P0 必要修复提交：ba37892c8e98cf0a5292c029f307e012b589e54f (`fix: align mvp run retries and evidence sources`)；未调用真实模型或 GitHub API。
   - F3-12: Gate B-P0 实施提交：8c618574bbe70ce8169f74ec6af7bd0bce878499 (`test: add offline gate b compatibility chain`)；未调用真实模型或 GitHub API。
   - F3-13: Gate B 受控在线入口提交：9667636e7048f0ecfd33f26c7787fb3ae8068b73 (`feat: add controlled online gate b`)；仅完成前置阻断验证。
   - F3-14: Agent usage event 修复提交：89ebd81e5a2a6ecc995bbe72e6f124ffcb8b024d (`fix: record model usage in agent events`)。
   - F3-15: Gate B 回归测试修复提交：待本次状态提交记录；未新增任何网络请求。
 
 ## 3. Current Engineering Flow and Impediments
-- Current Impediment / Stop Point: Gate A/B 历史在线记录保留；Gate B 因 network_error 失败且不得重试；真实模型 + 真实 GitHub MVP 端到端仍需新的明确授权和费用控制。
+- Current Impediment / Stop Point: Gate A/B 历史在线记录保留；Gate B 因 network_error 失败且不得重试；真实模型 + 真实 GitHub MVP 端到端仍需新的明确授权、Key 和费用控制。
 - [x] T01: 完成 S0 产品需求分析 -> Target Artifact: docs/GitHub-Scout-Agent-产品需求分析-V0.1.md | Verification: 文件已实际读取；V0.1 保留。
 - [x] T02: 完成 S1 产品需求冻结 -> Target Artifact: docs/GitHub-Scout-Agent-PRD-V0.2.md | Verification: 五项决策、MVP、Agent Loop、只读边界、F/S 验收和 S0-S6 路线已写入；文档一致性检查通过。
 - [x] T03: 完成 S2 技术架构设计 -> Target Artifact: docs/GitHub-Scout-Agent-技术架构设计-V0.1.md | Verification: 总体架构、Agent Loop、工具/API、数据、报告、安全、预算、错误、技术栈、测试和 S3-S5 依赖已写入；文档一致性检查通过；待用户验收。
@@ -84,8 +86,9 @@
 - [x] T13-P0: 完成 Gate B 受控在线入口与前置校验 -> Target Artifact: src/github_scout_agent/gate_b.py、src/github_scout_agent/cli.py | Verification: `--online --confirm-live` 无 Key 时安全返回 `missing_api_key`；Gate B 一次性记录未创建；真实请求 0。
 - [x] T14: 完成 Gate B 唯一在线任务 -> Target Artifact: .scout/gate_b_online_authorization.json | Verification: 模型请求 1 次；network_error；GitHub 请求 0；无重试；Gate B 一次性记录保留。
 - [x] T15-P0: 完成 S5-03 MVP 主线离线收敛 -> Target Artifact: src/github_scout_agent/application.py、src/github_scout_agent/cli.py、tests/test_application.py | Verification: `run <task> --confirm-live` 生产装配存在；Mock 模型/Mock GitHub 通过现有 Agent Loop；证据报告包含来源、缺失、预算、终止和模型解释分离；101 tests passed。
-- [ ] T16: 进入最终真实 MVP 端到端验收 -> Target Artifact: 待授权 | Acceptance: 用户明确授权真实模型/GitHub、费用上限和一次性运行方案后再开始；当前不得执行。
+- [x] T16-P0: 完成最终真实 MVP 端到端验收准备 -> Target Artifact: src/github_scout_agent/application.py、src/github_scout_agent/cli.py、tests/test_application.py | Verification: 生产 run 链路、确认门、预算、GET-only/公开边界、MockTransport 业务闭环、来源报告和离线回归均已核实；未发真实请求。
+- [ ] T17: 进入一次性真实 MVP 端到端验收 -> Target Artifact: 待用户授权 | Acceptance: 明确配置、费用上限和一次性命令后再开始；当前不得执行。
 
 ## 4. Ruled-Out Approaches and Side Items
-- Ruled Out: MVP 不采用 GitHub 写操作、私有仓库、Clone、第三方代码执行、任意 Shell、用户真实文件管理、复杂多 Provider 框架、非结构化伪工具调用、多 Agent、RAG、GraphQL 强制迁移和 Windows 桌面应用；本轮未执行真实模型/GitHub MVP 端到端、未修改 Gate A/B 历史记录、未进入 Gate C | Credentials: Gate A/B 一次性记录、DeepSeek 官方文档/价格页、S5-03 MockTransport 装配证据 | Revert Scope: None | Retained Net Assets: Gate A/B dry-run/失败记录、受控在线入口、生产 `run` 装配、证据报告、Mock LLM、Mock GitHub 三轮接线、预算与事件记录和离线测试。
+- Ruled Out: MVP 不采用 GitHub 写操作、私有仓库、Clone、第三方代码执行、任意 Shell、用户真实文件管理、复杂多 Provider 框架、非结构化伪工具调用、多 Agent、RAG、GraphQL 强制迁移和 Windows 桌面应用；T16-P0 未执行真实模型/GitHub MVP 端到端、未修改 Gate A/B 历史记录、未进入 Gate C | Credentials: Gate A/B 一次性记录、DeepSeek 官方文档/价格页、T16-P0 MockTransport 与静态审计证据 | Revert Scope: None | Retained Net Assets: Gate A/B dry-run/失败记录、受控在线入口、生产 `run` 装配、证据报告、Mock LLM、Mock GitHub 三轮接线、预算与事件记录和离线测试。
 - P-01: MVP 完成后评估本地 Web UI、更多模型端点和历史报告/本地索引 | Reason for Deferral: 不影响当前 CLI Agent 闭环和安全验收 | Wake-up Timing: S5 MVP 验收后。
