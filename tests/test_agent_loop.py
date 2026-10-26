@@ -211,6 +211,146 @@ def test_finalization_does_not_execute_new_tool_calls() -> None:
     assert budget.github_requests_used == 2
 
 
+def _t24_batch_handler(request: httpx.Request) -> httpx.Response:
+    if request.url.path == "/search/repositories":
+        return httpx.Response(
+            200,
+            json={
+                "total_count": 3,
+                "items": [
+                    _repo() | {
+                        "full_name": f"octo/repo-{index}",
+                        "html_url": f"https://github.com/octo/repo-{index}",
+                    }
+                    for index in range(3)
+                ],
+            },
+            request=request,
+        )
+    if request.url.path.endswith("/readme"):
+        content = "bounded README evidence"
+        return httpx.Response(
+            200,
+            json={"encoding": "base64", "content": base64.b64encode(content.encode()).decode(), "size": len(content)},
+            request=request,
+        )
+    if request.url.path.endswith("/languages"):
+        return httpx.Response(200, json={"Python": 10}, request=request)
+    if request.url.path.endswith("/topics"):
+        return httpx.Response(200, json={"names": ["agent"]}, request=request)
+    if request.url.path.endswith("/license"):
+        return httpx.Response(404, json={"message": "Not Found"}, request=request)
+    if request.url.path.startswith("/repos/"):
+        return httpx.Response(
+            200,
+            json=_repo() | {"full_name": request.url.path.removeprefix("/repos/")},
+            request=request,
+        )
+    return httpx.Response(404, json={"message": "Not Found"}, request=request)
+
+
+def test_t24_batch_budget_stop_preserves_ids_and_reaches_finalization() -> None:
+    calls = [
+        ToolCall(id="search", name="search_public_repositories", arguments=json.dumps({"query": "agent"})),
+        ToolCall(id="repo", name="get_public_repository", arguments=json.dumps({"owner": "octo", "repo": "repo-0"})),
+        ToolCall(id="readme-0", name="get_public_readme", arguments=json.dumps({"owner": "octo", "repo": "repo-0"})),
+        ToolCall(id="license-0", name="get_repository_license", arguments=json.dumps({"owner": "octo", "repo": "repo-0"})),
+        ToolCall(id="languages-0", name="get_repository_languages_and_topics", arguments=json.dumps({"owner": "octo", "repo": "repo-0"})),
+        ToolCall(id="readme-1", name="get_public_readme", arguments=json.dumps({"owner": "octo", "repo": "repo-1"})),
+        ToolCall(id="languages-1", name="get_repository_languages_and_topics", arguments=json.dumps({"owner": "octo", "repo": "repo-1"})),
+    ]
+    mock = ScriptedMockLLM([
+        AssistantResponse(tool_calls=calls),
+        AssistantResponse(content="Recommendation based on verified evidence."),
+    ])
+    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=20_000)
+    with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_t24_batch_handler)) as client:
+        result = AgentLoop(
+            model=mock,
+            tools=build_github_tool_registry(client),
+            budget=budget,
+            config=AgentLoopConfig(finalization_reserve_calls=1),
+        ).run("compare agents")
+
+    assert result.status == "completed"
+    assert result.termination_reason == "model_finalized"
+    assert mock.tool_choices == ["auto", "none"]
+    assert budget.github_requests_used == 7
+    assert result.tool_results[-1].error.code == "github_requests_insufficient"
+    assert [message.tool_call_id for message in result.messages if message.role == "tool"] == [
+        call.id for call in calls
+    ]
+    assert any(event.event_type == "finalization_started" for event in result.events)
+    assert all(event.event_type != "task_terminated" for event in result.events)
+
+
+def test_t24_large_batch_stops_without_network_overrun_or_finalization_without_evidence() -> None:
+    calls = [
+        ToolCall(id="search", name="search_public_repositories", arguments=json.dumps({"query": "agent"})),
+        ToolCall(id="languages", name="get_repository_languages_and_topics", arguments=json.dumps({"owner": "octo", "repo": "repo-0"})),
+        ToolCall(id="readme", name="get_public_readme", arguments=json.dumps({"owner": "octo", "repo": "repo-0"})),
+    ]
+    mock = ScriptedMockLLM([AssistantResponse(tool_calls=calls), AssistantResponse(content="must not reach")])
+    budget = RequestBudget(max_candidates=3, max_github_requests=2, max_model_calls=5, max_feedback_bytes=20_000)
+    with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_t24_batch_handler)) as client:
+        result = AgentLoop(model=mock, tools=build_github_tool_registry(client), budget=budget).run("bounded")
+
+    assert result.status == "terminated"
+    assert result.termination_reason == "github_requests"
+    assert mock.tool_choices == ["auto"]
+    assert budget.github_requests_used == 1
+    assert result.tool_results[1].error.code == "github_requests_insufficient"
+    assert [message.tool_call_id for message in result.messages if message.role == "tool"] == [
+        call.id for call in calls
+    ]
+
+
+def test_t24_github_boundary_finalization_tool_call_never_reaches_network() -> None:
+    mock = ScriptedMockLLM([
+        AssistantResponse(tool_calls=[
+            ToolCall(id="search", name="search_public_repositories", arguments=json.dumps({"query": "agent"})),
+            ToolCall(id="repo", name="get_public_repository", arguments=json.dumps({"owner": "octo", "repo": "repo-0"})),
+        ]),
+        AssistantResponse(tool_calls=[
+            ToolCall(id="late", name="get_public_readme", arguments=json.dumps({"owner": "octo", "repo": "repo-0"}))
+        ]),
+    ])
+    budget = RequestBudget(max_candidates=3, max_github_requests=2, max_model_calls=5, max_feedback_bytes=20_000)
+    with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_t24_batch_handler)) as client:
+        result = AgentLoop(
+            model=mock,
+            tools=build_github_tool_registry(client),
+            budget=budget,
+            config=AgentLoopConfig(finalization_reserve_calls=1),
+        ).run("finish at boundary")
+
+    assert result.status == "terminated"
+    assert result.termination_reason == "finalization_tool_call"
+    assert mock.tool_choices == ["auto", "none"]
+    assert budget.github_requests_used == 2
+
+
+def test_t24_normal_research_path_does_not_force_finalization() -> None:
+    mock = ScriptedMockLLM([
+        AssistantResponse(tool_calls=[
+            ToolCall(id="search", name="search_public_repositories", arguments=json.dumps({"query": "agent"}))
+        ]),
+        AssistantResponse(content="normal completion"),
+    ])
+    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=20_000)
+    with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_t24_batch_handler)) as client:
+        result = AgentLoop(
+            model=mock,
+            tools=build_github_tool_registry(client),
+            budget=budget,
+            config=AgentLoopConfig(finalization_reserve_calls=1),
+        ).run("normal")
+
+    assert result.status == "completed"
+    assert result.termination_reason == "model_completed"
+    assert mock.tool_choices == ["auto", "auto"]
+
+
 def test_full_candidate_capacity_blocks_new_search_but_allows_accepted_followup() -> None:
     responses = [
         AssistantResponse(tool_calls=[ToolCall(id="search-1", name="search_public_repositories", arguments=json.dumps({"query": "first"}))]),
@@ -496,7 +636,7 @@ def test_github_request_budget_stops_before_next_tool_and_model() -> None:
         "search_public_repositories",
         "get_public_readme",
     ]
-    assert result.tool_results[1].error.code == "budget_exceeded"
+    assert result.tool_results[1].error.code == "github_requests_insufficient"
     assert budget.model_calls_used == 2
 
 
@@ -579,7 +719,7 @@ def test_multiple_tool_calls_mid_budget_stop_produces_blocked_result_for_remaini
     assert result.status == "terminated"
     assert result.termination_reason == "github_requests"
     assert len(result.tool_results) == 2
-    assert result.tool_results[1].error.code == "budget_exceeded"
+    assert result.tool_results[1].error.code == "github_requests_insufficient"
     assert [message.tool_call_id for message in result.messages if message.role == "tool"] == ["first", "second"]
 
 

@@ -90,6 +90,10 @@ class RequestBudget:
             )
         self.github_requests_used += 1
 
+    @property
+    def github_requests_remaining(self) -> int:
+        return max(self.max_github_requests - self.github_requests_used, 0)
+
     def record_response_size(self, size: int) -> None:
         self.record_response_chunk(size, size)
 

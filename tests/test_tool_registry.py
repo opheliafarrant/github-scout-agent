@@ -27,6 +27,27 @@ def test_registry_has_exactly_the_five_predefined_tools() -> None:
     assert all(schema["function"]["strict"] is True for schema in schemas)
 
 
+def test_registry_estimates_composite_request_cost_without_network() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(500, request=request)
+
+    with GitHubRestClient(transport=httpx.MockTransport(handler)) as client:
+        registry = build_github_tool_registry(client)
+        assert registry.estimated_request_count(
+            "get_repository_languages_and_topics", {"owner": "octo", "repo": "demo"}
+        ) == 2
+        assert registry.estimated_request_count(
+            "get_public_readme", {"owner": "octo", "repo": "demo"}
+        ) == 1
+        assert registry.estimated_request_count("unknown_tool", {}) == 0
+        assert registry.estimated_request_count("get_public_readme", "not-json") == 0
+
+    assert requests == []
+
+
 def test_unknown_tool_invalid_json_and_invalid_arguments_never_reach_transport() -> None:
     requests: list[httpx.Request] = []
 

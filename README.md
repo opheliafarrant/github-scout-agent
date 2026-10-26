@@ -12,9 +12,11 @@ The current foundation provides:
 - a synchronous, injectable Mock-LLM Agent Loop with redacted execution events;
 - a narrow, offline-tested OpenAI-compatible Chat Completions Tool Calling adapter;
 - an offline `mock-demo` CLI command showing feedback-driven query rewriting;
-- offline tests for import, version, help, configuration, tools, errors, and security boundaries.
+- a confirmed production `run <task> --confirm-live` path using the model adapter, Agent Loop, fixed GitHub tools, budgets, and evidence report;
+- T24 batch-safe Finalization handling for multiple Tool Calls;
+- offline tests for import, version, help, configuration, tools, errors, Agent Loop, reports, and security boundaries.
 
-It still does not call real GitHub or model endpoints, execute repository code, or provide a production model client.
+The production `run` path can call real GitHub and model endpoints only with explicit `--confirm-live`; it is never used by default. It does not execute repository code, provide arbitrary Shell access, or perform GitHub write operations.
 
 ## Local commands
 
@@ -25,6 +27,9 @@ python -m venv .venv
 \.venv\Scripts\github-scout-agent.exe version
 \.venv\Scripts\github-scout-agent.exe config
 \.venv\Scripts\github-scout-agent.exe mock-demo
+\.venv\Scripts\github-scout-agent.exe run "find small Python agent repositories" --confirm-live
+# Default offline regression; excludes the explicitly marked live GitHub test.
+\.venv\Scripts\python.exe -m pytest -m "not live_github" --tb=short
 \.venv\Scripts\python.exe -m pytest
 # Explicit real GitHub public REST verification; never runs by default.
 \.venv\Scripts\python.exe -m pytest -m live_github -s
@@ -50,3 +55,9 @@ Configuration status reads these environment variables without printing their va
 - `GITHUB_SCOUT_MODEL_MAX_TOKENS`
 
 S3-01/S3-03 do not use these values to make real network requests. S4-01 live verification uses a bounded public-only budget; a configured `GITHUB_TOKEN` is optional and never printed.
+
+## Current verification boundary
+
+T24-P0 batch-budget and Finalization fixes are frozen locally and covered by the offline regression suite. The current offline result is 118 passed, 1 deselected. The final real MVP run has not been re-authorized after T24; do not infer real DeepSeek compatibility, recommendation quality, remaining cost, or dynamic GitHub behavior from the offline result.
+
+The planned T25 online run keeps these hard limits: DeepSeek `deepseek-flash`, `https://api.deepseek.com`, at most 5 model calls including Finalization, 8 GitHub GET requests, 3 candidates, search `per_page <= 5`, `max_tokens=512`, 15-second HTTP timeout, 120-second task timeout, no retries, and no fallback model. If the remaining cumulative RMB budget cannot be established from reliable records, do not run it.

@@ -49,6 +49,19 @@ def _candidate_records(tool_results: Iterable[Any]) -> list[Any]:
     return list(records.values())
 
 
+def _report_is_complete(result: AgentRunResult) -> bool:
+    if result.status != "completed":
+        return False
+    incomplete_evidence_codes = {
+        "github_requests_insufficient",
+        "not_executed_before_finalization",
+    }
+    return not any(
+        item.error is not None and item.error.code in incomplete_evidence_codes
+        for item in result.tool_results
+    )
+
+
 def render_mvp_report(task: str, result: AgentRunResult) -> str:
     """Render an evidence-first report without inventing scores or facts."""
 
@@ -58,7 +71,7 @@ def render_mvp_report(task: str, result: AgentRunResult) -> str:
         f"- Task: {task}",
         f"- Status: {result.status}",
         f"- Termination: {result.termination_reason}",
-        f"- Completeness: {'complete' if result.status == 'completed' else 'partial'}",
+        f"- Completeness: {'complete' if _report_is_complete(result) else 'partial'}",
         "",
         "## Candidate evidence",
     ]

@@ -6,6 +6,8 @@ import httpx
 from pydantic import SecretStr
 
 from github_scout_agent.application import render_mvp_report, run_research_task
+from github_scout_agent.agent_loop import AgentRunResult
+from github_scout_agent.github_models import ToolError, ToolResult
 from github_scout_agent.budget import RequestBudget
 from github_scout_agent.github_api import GitHubRestClient
 from github_scout_agent.model_client import OpenAICompatibleClient
@@ -118,3 +120,28 @@ def test_partial_result_report_is_explicitly_marked() -> None:
     assert result.status == "terminated"
     assert "Completeness: partial" in report
     assert model_calls == 1
+
+
+def test_finalized_report_with_skipped_evidence_is_marked_partial() -> None:
+    result = AgentRunResult(
+        status="completed",
+        termination_reason="model_finalized",
+        final_text="Evidence-constrained recommendation.",
+        tool_results=[
+            ToolResult(
+                tool_name="get_repository_languages_and_topics",
+                ok=False,
+                error=ToolError(
+                    code="github_requests_insufficient",
+                    category="budget",
+                    message="only one request remained",
+                ),
+            )
+        ],
+        budget={},
+    )
+
+    report = render_mvp_report("partial evidence", result)
+
+    assert "Status: completed" in report
+    assert "Completeness: partial" in report

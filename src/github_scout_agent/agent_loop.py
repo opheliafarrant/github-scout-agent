@@ -79,7 +79,11 @@ class AgentLoop:
                 not finalization_done
                 and self.config.finalization_reserve_calls > 0
                 and self._should_finalize(tool_results)
-                and (self._research_budget_boundary_reached() or self.budget.candidates_full)
+                and (
+                    self._research_budget_boundary_reached()
+                    or self._github_budget_boundary_reached()
+                    or self.budget.candidates_full
+                )
             ):
                 finalization_done = True
                 return self._finalize(messages, tool_results, final_text)
@@ -126,6 +130,7 @@ class AgentLoop:
                 return self._result("completed", termination_reason, final_text, messages, tool_results)
 
             should_stop = False
+            finalize_after_batch = False
             response_call_ids: set[str] = set()
             for index, call in enumerate(response.tool_calls):
                 self.events.emit("tool_call_requested", tool_call_id=call.id, tool_name=call.name)
@@ -140,7 +145,7 @@ class AgentLoop:
                     should_stop = True
                     termination_reason = "repeated_action_blocked"
                 else:
-                    result = self._dispatch_call(call)
+                    result, finalize_after_batch = self._dispatch_batch_call(call, tool_results)
                 response_call_ids.add(call.id)
                 tool_results.append(result)
                 messages.append(self._tool_message(call.id, result, self.budget))
@@ -161,7 +166,13 @@ class AgentLoop:
                         termination_reason = "protocol_retries_exhausted"
                 if result.error and result.error.category == "budget":
                     should_stop = True
-                    termination_reason = result.error.code
+                    termination_reason = (
+                        "research_budget_boundary"
+                        if finalize_after_batch
+                        else "github_requests"
+                        if result.error.code == "github_requests_insufficient"
+                        else result.error.code
+                    )
                 if result.error and result.error.code == "candidate_capacity_full":
                     capacity_blocked_searches += 1
                     if capacity_blocked_searches > 1:
@@ -171,13 +182,30 @@ class AgentLoop:
                     should_stop = True
                     termination_reason = self.budget.fatal_exhausted_dimensions[-1]
                 if should_stop:
+                    blocked_code = (
+                        "not_executed_before_finalization"
+                        if finalize_after_batch
+                        else "not_executed_after_stop"
+                    )
+                    blocked_message = (
+                        "tool was not executed because research stopped before finalization"
+                        if finalize_after_batch
+                        else "tool was not executed after safe stop"
+                    )
                     for remaining in response.tool_calls[index + 1 :]:
-                        blocked = self._blocked_result(remaining, "not_executed_after_stop", "tool was not executed after safe stop")
+                        blocked = self._blocked_result(remaining, blocked_code, blocked_message)
                         tool_results.append(blocked)
                         messages.append(self._tool_message(remaining.id, blocked, self.budget))
-                        self.events.emit("tool_blocked", tool_call_id=remaining.id, tool_name=remaining.name)
+                        self.events.emit(
+                            "tool_blocked",
+                            tool_call_id=remaining.id,
+                            tool_name=remaining.name,
+                            error_code=blocked_code,
+                        )
                     break
 
+            if finalize_after_batch:
+                return self._finalize(messages, tool_results, final_text)
             if should_stop:
                 if not termination_reason or termination_reason == "unknown":
                     termination_reason = "safe_stop"
@@ -222,11 +250,50 @@ class AgentLoop:
             return self._blocked_result(call, "feedback_bytes", str(exc), request_count=result.request_count)
         return result
 
+    def _dispatch_batch_call(
+        self,
+        call: ToolCall,
+        tool_results: list[ToolResult],
+    ) -> tuple[ToolResult, bool]:
+        """Dispatch one call, stopping a batch before a known request overrun."""
+
+        if call.name == "search_public_repositories" and self.budget.candidates_full:
+            return self._dispatch_call(call), False
+        if not self.tools.candidate_access_allowed(call.name, call.arguments):
+            return self._dispatch_call(call), False
+
+        estimated_requests = self.tools.estimated_request_count(call.name, call.arguments)
+        if estimated_requests and estimated_requests > self.budget.github_requests_remaining:
+            can_finalize = self._should_finalize(tool_results) and self._finalization_call_available()
+            return (
+                self._blocked_result(
+                    call,
+                    "github_requests_insufficient",
+                    (
+                        f"tool requires {estimated_requests} GitHub requests but only "
+                        f"{self.budget.github_requests_remaining} remain"
+                    ),
+                ),
+                can_finalize,
+            )
+        return self._dispatch_call(call), False
+
     def _research_budget_boundary_reached(self) -> bool:
         if self.budget.max_model_calls is None:
             return False
         research_limit = max(self.budget.max_model_calls - self.config.finalization_reserve_calls, 0)
         return self.budget.model_calls_used >= research_limit
+
+    def _github_budget_boundary_reached(self) -> bool:
+        return self.budget.github_requests_remaining == 0
+
+    def _finalization_call_available(self) -> bool:
+        if self.config.finalization_reserve_calls <= 0:
+            return False
+        return (
+            self.budget.max_model_calls is None
+            or self.budget.model_calls_used < self.budget.max_model_calls
+        )
 
     @staticmethod
     def _should_finalize(tool_results: list[ToolResult]) -> bool:
@@ -268,6 +335,9 @@ class AgentLoop:
         except ModelCallError as exc:
             self.events.emit("task_terminated", reason=exc.code, error_category=exc.category)
             return self._result("terminated", exc.code, final_text, messages, tool_results)
+        except ModelProtocolError:
+            self.events.emit("task_terminated", reason="model_call_error", error_category="protocol")
+            return self._result("terminated", "model_call_error", final_text, messages, tool_results)
         self.events.emit(
             "finalization_finished",
             has_tool_calls=bool(response.tool_calls),
@@ -311,7 +381,12 @@ class AgentLoop:
     ) -> ToolResult:
         category = (
             "budget"
-            if code in {"task_time", "feedback_bytes"}
+            if code in {
+                "task_time",
+                "feedback_bytes",
+                "github_requests_insufficient",
+                "not_executed_before_finalization",
+            }
             else "safety"
             if code in {"candidate_not_accepted", "candidate_capacity_full"}
             else "protocol"

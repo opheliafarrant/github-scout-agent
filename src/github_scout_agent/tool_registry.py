@@ -83,6 +83,33 @@ class ToolRegistry:
     def schemas(self) -> list[dict[str, Any]]:
         return [definition.schema() for definition in self._definitions.values()]
 
+    def estimated_request_count(self, name: str, arguments: str | dict[str, Any]) -> int:
+        """Return the bounded GitHub request cost for a valid tool call.
+
+        Invalid or unknown calls return zero so normal protocol validation still
+        happens in ``dispatch`` and cannot be hidden by a budget preflight.
+        """
+
+        definition = self._definitions.get(name)
+        if definition is None:
+            return 0
+        if isinstance(arguments, str):
+            try:
+                raw_arguments = json.loads(arguments)
+            except json.JSONDecodeError:
+                return 0
+        else:
+            raw_arguments = arguments
+        if not isinstance(raw_arguments, dict):
+            return 0
+        try:
+            definition.arguments_model.model_validate(raw_arguments)
+        except ValidationError:
+            return 0
+        if name == "get_repository_languages_and_topics":
+            return 2
+        return 1
+
     def candidate_access_allowed(self, name: str, arguments: str | dict[str, Any]) -> bool:
         """When candidate capacity is full, allow evidence only for accepted IDs."""
 
