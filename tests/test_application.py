@@ -74,3 +74,47 @@ def test_production_application_assembly_works_with_mock_transports() -> None:
     assert "Evidence reviewed." in report
     assert "model_calls_used" in report
     assert model_calls == 2
+
+
+def test_partial_result_report_is_explicitly_marked() -> None:
+    model_calls = 0
+
+    def model_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal model_calls
+        model_calls += 1
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [{
+                            "id": "partial-search",
+                            "type": "function",
+                            "function": {"name": "search_public_repositories", "arguments": json.dumps({"query": "partial"})},
+                        }],
+                    },
+                    "finish_reason": "tool_calls",
+                }]
+            },
+            request=request,
+        )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"total_count": 0, "items": []}, request=request)
+
+    budget = RequestBudget(max_model_calls=1, max_github_requests=1, max_candidates=3, max_feedback_bytes=20_000)
+    with OpenAICompatibleClient(
+        base_url="https://model.example.test/v1",
+        api_key=SecretStr("partial-report-test-key"),
+        model="mock-model",
+        budget=budget,
+        transport=httpx.MockTransport(model_handler),
+    ) as model, GitHubRestClient(budget=budget, transport=httpx.MockTransport(handler)) as github:
+        result = run_research_task("partial", model=model, github=github, budget=budget)
+
+    report = render_mvp_report("partial", result)
+    assert result.status == "terminated"
+    assert "Completeness: partial" in report
+    assert model_calls == 1

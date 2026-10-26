@@ -143,6 +143,65 @@ def test_full_candidate_capacity_does_not_block_readme_followup_for_accepted_rep
     assert result.tool_results[1].ok is True
 
 
+def test_full_candidate_capacity_blocks_new_search_but_allows_accepted_followup() -> None:
+    responses = [
+        AssistantResponse(tool_calls=[ToolCall(id="search-1", name="search_public_repositories", arguments=json.dumps({"query": "first"}))]),
+        AssistantResponse(tool_calls=[ToolCall(id="search-2", name="search_public_repositories", arguments=json.dumps({"query": "different"}))]),
+        AssistantResponse(tool_calls=[ToolCall(id="readme-1", name="get_public_readme", arguments=json.dumps({"owner": "octo", "repo": "repo-0"}))]),
+        AssistantResponse(content="partial evidence is sufficient"),
+    ]
+    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=4, max_feedback_bytes=20_000)
+    with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_full_pool_handler)) as client:
+        result = AgentLoop(
+            model=ScriptedMockLLM(responses),
+            tools=build_github_tool_registry(client),
+            budget=budget,
+        ).run("converge")
+
+    assert result.status == "completed"
+    assert result.tool_results[1].error.code == "candidate_capacity_full"
+    assert result.tool_results[2].ok is True
+    assert budget.github_requests_used == 2
+    assert budget.candidates_used == 3
+
+
+def test_repeated_capacity_blocked_searches_terminate_without_network() -> None:
+    responses = [
+        AssistantResponse(tool_calls=[ToolCall(id="search-1", name="search_public_repositories", arguments=json.dumps({"query": "first"}))]),
+        AssistantResponse(tool_calls=[ToolCall(id="search-2", name="search_public_repositories", arguments=json.dumps({"query": "second"}))]),
+        AssistantResponse(tool_calls=[ToolCall(id="search-3", name="search_public_repositories", arguments=json.dumps({"query": "third"}))]),
+    ]
+    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=20_000)
+    with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_full_pool_handler)) as client:
+        result = AgentLoop(
+            model=ScriptedMockLLM(responses),
+            tools=build_github_tool_registry(client),
+            budget=budget,
+        ).run("stop repeated search")
+
+    assert result.status == "terminated"
+    assert result.termination_reason == "candidate_capacity_full"
+    assert budget.github_requests_used == 1
+
+
+def test_tool_feedback_exposes_budget_snapshot_to_next_model_turn() -> None:
+    response = AssistantResponse(
+        tool_calls=[ToolCall(id="search", name="search_public_repositories", arguments=json.dumps({"query": "x"}))]
+    )
+    budget = RequestBudget(max_candidates=3, max_github_requests=3, max_model_calls=2, max_feedback_bytes=20_000)
+    with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_full_pool_handler)) as client:
+        result = AgentLoop(
+            model=ScriptedMockLLM([response, AssistantResponse(content="done")]),
+            tools=build_github_tool_registry(client),
+            budget=budget,
+        ).run("budget feedback")
+
+    tool_messages = [message for message in result.messages if message.role == "tool"]
+    payload = json.loads(tool_messages[0].content)
+    assert payload["_budget"]["candidates_used"] == 3
+    assert payload["_budget"]["github_requests_used"] == 1
+
+
 def test_full_candidate_capacity_does_not_block_license_followup_for_accepted_repo() -> None:
     budget = RequestBudget(max_candidates=5, max_github_requests=5, max_model_calls=5, max_feedback_bytes=20_000)
     with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_full_pool_handler)) as client:

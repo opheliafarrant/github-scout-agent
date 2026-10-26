@@ -61,6 +61,7 @@ class AgentLoop:
         tool_results: list[ToolResult] = []
         repeated_actions: Counter[str] = Counter()
         protocol_errors = 0
+        capacity_blocked_searches = 0
         final_text: str | None = None
         termination_reason = "unknown"
 
@@ -126,7 +127,7 @@ class AgentLoop:
                     result = self._dispatch_call(call)
                 response_call_ids.add(call.id)
                 tool_results.append(result)
-                messages.append(self._tool_message(call.id, result))
+                messages.append(self._tool_message(call.id, result, self.budget))
                 self.events.emit(
                     "tool_finished",
                     tool_call_id=call.id,
@@ -145,6 +146,11 @@ class AgentLoop:
                 if result.error and result.error.category == "budget":
                     should_stop = True
                     termination_reason = result.error.code
+                if result.error and result.error.code == "candidate_capacity_full":
+                    capacity_blocked_searches += 1
+                    if capacity_blocked_searches > 1:
+                        should_stop = True
+                        termination_reason = "candidate_capacity_full"
                 if self.budget.fatal_exhausted_dimensions:
                     should_stop = True
                     termination_reason = self.budget.fatal_exhausted_dimensions[-1]
@@ -152,7 +158,7 @@ class AgentLoop:
                     for remaining in response.tool_calls[index + 1 :]:
                         blocked = self._blocked_result(remaining, "not_executed_after_stop", "tool was not executed after safe stop")
                         tool_results.append(blocked)
-                        messages.append(self._tool_message(remaining.id, blocked))
+                        messages.append(self._tool_message(remaining.id, blocked, self.budget))
                         self.events.emit("tool_blocked", tool_call_id=remaining.id, tool_name=remaining.name)
                     break
 
@@ -167,6 +173,12 @@ class AgentLoop:
             self.budget.check_task_time()
         except BudgetExceeded as exc:
             return self._blocked_result(call, exc.dimension, str(exc))
+        if call.name == "search_public_repositories" and self.budget.candidates_full:
+            return self._blocked_result(
+                call,
+                "candidate_capacity_full",
+                "candidate capacity is full; search for new candidates is blocked, but accepted-candidate evidence follow-up remains allowed",
+            )
         if not self.tools.candidate_access_allowed(call.name, call.arguments):
             return self._blocked_result(
                 call,
@@ -203,11 +215,13 @@ class AgentLoop:
         return f"{call.name}:{arguments}"
 
     @staticmethod
-    def _tool_message(call_id: str, result: ToolResult) -> AgentMessage:
+    def _tool_message(call_id: str, result: ToolResult, budget: RequestBudget) -> AgentMessage:
+        payload = result.model_dump(mode="json")
+        payload["_budget"] = budget.snapshot()
         return AgentMessage(
             role="tool",
             tool_call_id=call_id,
-            content=result.model_dump_json(),
+            content=json.dumps(payload, ensure_ascii=False, sort_keys=True),
         )
 
     @staticmethod
@@ -222,7 +236,7 @@ class AgentLoop:
             "budget"
             if code in {"task_time", "feedback_bytes"}
             else "safety"
-            if code == "candidate_not_accepted"
+            if code in {"candidate_not_accepted", "candidate_capacity_full"}
             else "protocol"
         )
         return ToolResult(

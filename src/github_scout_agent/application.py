@@ -57,6 +57,7 @@ def render_mvp_report(task: str, result: AgentRunResult) -> str:
         f"- Task: {task}",
         f"- Status: {result.status}",
         f"- Termination: {result.termination_reason}",
+        f"- Completeness: {'complete' if result.status == 'completed' else 'partial'}",
         "",
         "## Candidate evidence",
     ]
