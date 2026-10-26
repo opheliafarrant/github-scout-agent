@@ -2,8 +2,8 @@
 
 ## 1. Task Foundation
 - True Goal: 建立可回退、可测试的 GitHub Scout Agent Python 工程基础和只读工具系统，并按阶段推进受限 Agent Loop 开发。
-- Current Stage: S5-01 OpenAI-compatible Tool Calling 适配器（完成）
-- Active Mainline: T09: 完成窄化 HTTPX 模型适配器和离线协议验证；等待用户授权进入 S5-02 真实端点验收。
+- Current Stage: S5-02-P0 DeepSeek 真实模型接入预检（完成）
+- Active Mainline: T10-P0: 完成 DeepSeek 官方协议核验、非思考/非 strict 配置预检、费用 Gate 设计和离线验证；等待用户授权进入 S5-02 在线步骤。
 
 ## 2. Frozen Baselines and Inline Evidence
 - F1 Fact Baseline:
@@ -26,6 +26,9 @@
   - F1-17: S4-02 默认离线 pytest 实际结果为 60 passed、1 deselected；新增 MockTransport 接线测试验证两个场景均通过 Agent Loop，不绕过工具注册表。
   - F1-18: S4-02 在线 search 场景无 Token：3 模型轮次、2 次 GET（search -> README）、model_completed；repository 场景无 Token：3 模型轮次、2 次 GET（repository -> README）、model_completed；均未调用真实模型 API。
   - F1-19: S5-01 默认离线 pytest 实际结果为 75 passed、1 deselected；模型适配器 MockTransport 覆盖请求构造、usage、单/多 Tool Calls、错误、响应大小、预算和凭据隔离；未调用真实模型端点。
+  - F1-20: S5-02-P0 已核验 DeepSeek 官方资料：OpenAI Base URL `https://api.deepseek.com`、model `deepseek-flash`、Chat Completions `/chat/completions`、Tool Calls、`tool_choice=auto` 和非思考 `thinking.type=disabled`；Beta strict 需要 `/beta`，本轮不启用。
+  - F1-21: S5-02-P0 官方价格页面当前列出 deepseek-flash 输入/输出按 1M tokens 计费，并区分 cache hit/miss、peak/off-peak；Gate 金额仅为带假设的预算估算，不是扣费保证。
+  - F1-22: S5-02-P0 离线 pytest 实际结果为 76 passed、1 deselected；DeepSeek 候选请求 JSON、thinking disabled、strict 移除、max_tokens、Tool Calls 和错误路径均由 MockTransport 验证；真实模型调用次数为 0。
 - F2 Decision Baseline:
   - F2-01 (D1): MVP 采用 CLI；本地 Web UI 后置；Windows 桌面应用不属于 MVP。
   - F2-02 (D2): 支持无 Token 和用户自配只读 Token；只读公开仓库；不支持私有仓库、账户管理和任何 GitHub 写操作；Token 不进入模型、报告、普通日志或版本控制。
@@ -41,9 +44,10 @@
   - F3-06: S4-01 实施提交：3544b6257c2abc8354d8fae632c26ab56a24c6a2 (`test: verify github public rest integration`)；未配置或推送 remote。
   - F3-07: S4-02 实施提交：c8bb2d1d72aa71f2836221202a9df655c90f6bbe (`feat: connect mock agent loop to live github rest`)；未配置或推送 remote。
   - F3-08: S5-01 实施提交：c9461be4252922beb1dbb5835579202fdabb9819 (`feat: add offline openai compatible tool adapter`)；未调用真实模型 API。
+  - F3-09: S5-02-P0 实施提交：c9c34d8180daf12b68b42d85ceb2bcb967cd7999 (`feat: add deepseek offline preflight controls`)；未调用真实模型 API。
 
 ## 3. Current Engineering Flow and Impediments
-- Current Impediment / Stop Point: None；S5-01 已完成；S5-02 真实端点验收必须等待用户明确授权。
+- Current Impediment / Stop Point: None；S5-02-P0 已完成；S5-02 在线 Gate A/B/C 必须等待用户明确授权。
 - [x] T01: 完成 S0 产品需求分析 -> Target Artifact: docs/GitHub-Scout-Agent-产品需求分析-V0.1.md | Verification: 文件已实际读取；V0.1 保留。
 - [x] T02: 完成 S1 产品需求冻结 -> Target Artifact: docs/GitHub-Scout-Agent-PRD-V0.2.md | Verification: 五项决策、MVP、Agent Loop、只读边界、F/S 验收和 S0-S6 路线已写入；文档一致性检查通过。
 - [x] T03: 完成 S2 技术架构设计 -> Target Artifact: docs/GitHub-Scout-Agent-技术架构设计-V0.1.md | Verification: 总体架构、Agent Loop、工具/API、数据、报告、安全、预算、错误、技术栈、测试和 S3-S5 依赖已写入；文档一致性检查通过；待用户验收。
@@ -55,8 +59,9 @@
 - [x] T07: 完成 S4-01 真实 GitHub REST 只读接口验收 -> Target Artifact: tests/test_live_github.py、src/github_scout_agent/github_api.py、pyproject.toml、README.md | Verification: 显式 live_github 无 Token 测试通过；6 GET、5 类工具路径、公开过滤、缺失许可证、README trust label、来源/抓取字段和 host/method 约束已验证；Token 模式待凭据验证。
 - [x] T08: 完成 S4-02 Mock LLM + 真实 GitHub Agent 闭环 -> Target Artifact: src/github_scout_agent/live_agent_demo.py、src/github_scout_agent/mock_llm.py、tests/test_live_agent_wiring.py、CLI live-agent-demo | Verification: search 与 repository 两场景均真实经过 Agent Loop；各 2 GET、3 Mock 模型轮次、真实来源/缺失状态/预算输出已记录；60 offline tests passed。
 - [x] T09: 完成 S5-01 OpenAI-compatible Tool Calling 适配器 -> Target Artifact: src/github_scout_agent/model_client.py、src/github_scout_agent/agent_models.py、tests/test_model_client.py | Verification: 标准 messages/tools/tool_choice/stream=false、单/多 Tool Calls、tool_call_id、finish_reason、usage、错误/超时/大小预算和凭据隔离均由 MockTransport 验证；75 tests passed。
-- [ ] T10: 进入 S5-02 真实模型端点验收 -> Target Artifact: 待授权 | Acceptance: 用户明确授权并指定端点、成本预算和测试目的后再开始；当前不得发送模型请求。
+- [x] T10-P0: 完成 S5-02-P0 DeepSeek 接入预检 -> Target Artifact: src/github_scout_agent/{model_client,config}.py、tests/test_model_client.py、README.md | Verification: 官方协议、非思考、Beta strict、价格和候选模型已核验；offline 76 tests passed；真实模型请求 0。
+- [ ] T11: 进入 S5-02 在线 Gate A/B/C -> Target Artifact: 待授权 | Acceptance: 用户明确指定端点、费用预算和 Gate 后再开始；当前不得发送模型请求。
 
 ## 4. Ruled-Out Approaches and Side Items
-- Ruled Out: MVP 不采用 GitHub 写操作、私有仓库、Clone、第三方代码执行、任意 Shell、用户真实文件管理、复杂多 Provider 框架、非结构化伪工具调用、多 Agent、RAG、GraphQL 强制迁移和 Windows 桌面应用；S5-01 未调用真实模型、未实现伪工具降级，真实端点兼容性、strict/parallel_tool_calls 行为仍待 S5-02 | Credentials: 用户 D1-D5、PRD V0.2、S2 设计约束、S5-01 MockTransport 证据 | Revert Scope: None | Retained Net Assets: V0.1、PRD V0.2、架构设计 V0.1、基础 CLI、只读工具注册表、Agent Loop、Mock LLM、窄化模型适配器、预算与事件记录和离线测试。
+- Ruled Out: MVP 不采用 GitHub 写操作、私有仓库、Clone、第三方代码执行、任意 Shell、用户真实文件管理、复杂多 Provider 框架、非结构化伪工具调用、多 Agent、RAG、GraphQL 强制迁移和 Windows 桌面应用；S5-02-P0 未发送任何真实模型请求，Gate A/B/C 均未授权执行，strict/parallel_tool_calls 和真实端点行为仍待在线验证 | Credentials: 用户 D1-D5、PRD V0.2、S5-01 MockTransport、DeepSeek 官方文档和价格页 | Revert Scope: None | Retained Net Assets: V0.1、PRD V0.2、架构设计 V0.1、基础 CLI、只读工具注册表、Agent Loop、窄化适配器、DeepSeek 离线配置预检、预算与事件记录和离线测试。
 - P-01: MVP 完成后评估本地 Web UI、更多模型端点和历史报告/本地索引 | Reason for Deferral: 不影响当前 CLI Agent 闭环和安全验收 | Wake-up Timing: S5 MVP 验收后。
