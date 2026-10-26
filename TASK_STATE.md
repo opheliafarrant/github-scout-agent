@@ -1,9 +1,9 @@
 # TASK_STATE
 
 ## 1. Task Foundation
-- True Goal: 建立可回退、可测试的 GitHub Scout Agent Python 工程基础，并按阶段推进受限 Agent Loop 开发。
-- Current Stage: S3-01 工程初始化与基础验证（完成）
-- Active Mainline: T04: 完成 S3-01 基础工程、离线 CLI、配置边界、测试和本地 Git 基线；等待用户授权进入 S3-02。
+- True Goal: 建立可回退、可测试的 GitHub Scout Agent Python 工程基础和只读工具系统，并按阶段推进受限 Agent Loop 开发。
+- Current Stage: S3-02 只读工具系统与 Mock 验证（完成）
+- Active Mainline: T05: 完成五项 GitHub 只读工具、固定注册表、Mock 验证、错误分类和预算边界；等待用户授权进入 S3-03。
 
 ## 2. Frozen Baselines and Inline Evidence
 - F1 Fact Baseline:
@@ -13,6 +13,8 @@
   - F1-04: S3-01 实际环境：Python 3.13.5、pip 25.1.1、Git 2.53.0.windows.3；Windows `py` launcher 不存在，但 `python -m venv` 成功。
   - F1-05: S3-01 虚拟环境实际依赖：httpx 0.28.1、pydantic 2.14.1、typer 0.27.3、pytest 8.4.2；安装首次因 Windows 临时文件占用失败，无缓存重试成功。
   - F1-06: S3-01 离线 pytest 实际结果为 6 passed in 0.61s；CLI help、version、config 均返回 exit code 0；未调用真实 GitHub API 或模型 API。
+  - F1-07: S3-02 新增固定工具注册表、GitHub REST GET-only 客户端、Pydantic 数据/证据模型和确定性请求/响应/候选预算；所有网络测试使用 HTTPX MockTransport。
+  - F1-08: S3-02 完整离线 pytest 实际结果为 23 passed in 0.43s；CLI help、version、config 和 compileall 均通过；未调用真实 GitHub API 或模型 API。
 - F2 Decision Baseline:
   - F2-01 (D1): MVP 采用 CLI；本地 Web UI 后置；Windows 桌面应用不属于 MVP。
   - F2-02 (D2): 支持无 Token 和用户自配只读 Token；只读公开仓库；不支持私有仓库、账户管理和任何 GitHub 写操作；Token 不进入模型、报告、普通日志或版本控制。
@@ -20,16 +22,18 @@
   - F2-04 (D4): MVP 聚焦自然语言技术需求下的少量候选检索、证据补充、比较和可核验推荐报告；不承担完整代码/安全/供应链审计。
   - F2-05 (D5): 配置 Base URL、API Key、Model；先验收一个真实支持 Tool Calling 的 OpenAI-compatible 端点；不支持 Tool Calling 时明确失败，不采用非结构化命令替代。
 - F3 Version Baseline and Rollback Anchor:
-  - F3-01: S3-01 首个本地基线提交：1fd89eacfdf0e9cdef022f705818b9d389c4ad6e (`chore: initialize project foundation`)；未执行破坏性回滚操作。
+  - F3-01: S3-01 首个本地基线提交：1fd89eacfdf0e9cdef022f705818b9d389c4ad6e (`chore: initialize project foundation`)。
+  - F3-02: S3-02 实施提交：3fef06896bac4df62cade05586f54dbe772d5585 (`feat: add read-only github tool system`)；未执行破坏性回滚操作。
 
 ## 3. Current Engineering Flow and Impediments
-- Current Impediment / Stop Point: None；S3-01 已完成；S3-02 必须等待用户明确授权。
+- Current Impediment / Stop Point: None；S3-02 已完成；S3-03 必须等待用户明确授权。
 - [x] T01: 完成 S0 产品需求分析 -> Target Artifact: docs/GitHub-Scout-Agent-产品需求分析-V0.1.md | Verification: 文件已实际读取；V0.1 保留。
 - [x] T02: 完成 S1 产品需求冻结 -> Target Artifact: docs/GitHub-Scout-Agent-PRD-V0.2.md | Verification: 五项决策、MVP、Agent Loop、只读边界、F/S 验收和 S0-S6 路线已写入；文档一致性检查通过。
 - [x] T03: 完成 S2 技术架构设计 -> Target Artifact: docs/GitHub-Scout-Agent-技术架构设计-V0.1.md | Verification: 总体架构、Agent Loop、工具/API、数据、报告、安全、预算、错误、技术栈、测试和 S3-S5 依赖已写入；文档一致性检查通过；待用户验收。
 - [x] T04: 完成 S3-01 工程初始化与基础验证 -> Target Artifact: .git、.gitignore、pyproject.toml、src/github_scout_agent、tests、README.md | Verification: Python 3.13.5；4 个依赖版本已记录；6 个离线测试通过；CLI help/version/config 通过；基线提交 SHA 已记录。
-- [ ] T05: 进入 S3-02 受限 Agent Loop 原型 -> Target Artifact: 待授权 | Acceptance: 用户明确授权后再开始；当前不得创建 Agent Loop、GitHub 工具或模型客户端。
+- [x] T05: 完成 S3-02 只读工具系统与 Mock 验证 -> Target Artifact: src/github_scout_agent/{budget,github_api,github_models,tool_registry}.py、tests/test_github_tools.py、tests/test_tool_registry.py | Verification: 五项工具可注册/校验/调度；GET-only、固定 host、参数安全、错误分类、重试、响应/候选/请求预算和 Token 边界均有 Mock 测试；23 tests passed。
+- [ ] T06: 进入 S3-03 受限 Agent Loop 原型 -> Target Artifact: 待授权 | Acceptance: 用户明确授权后再开始；当前不得创建 Agent Loop、LLM 客户端或真实 API 集成。
 
 ## 4. Ruled-Out Approaches and Side Items
-- Ruled Out: MVP 不采用 GitHub 写操作、私有仓库、Clone、第三方代码执行、任意 Shell、用户真实文件管理、复杂多 Provider 框架、非结构化伪工具调用、多 Agent、RAG、GraphQL 强制迁移和 Windows 桌面应用；S3-01 未实现真实 Agent、GitHub 工具、模型客户端或网络调用 | Credentials: 用户 D1-D5、PRD V0.2、S2 设计约束、S3-01 实际测试 | Revert Scope: None | Retained Net Assets: V0.1、PRD V0.2、架构设计 V0.1、基础 CLI、配置校验、离线测试和官方资料链接。
+- Ruled Out: MVP 不采用 GitHub 写操作、私有仓库、Clone、第三方代码执行、任意 Shell、用户真实文件管理、复杂多 Provider 框架、非结构化伪工具调用、多 Agent、RAG、GraphQL 强制迁移和 Windows 桌面应用；S3-02 未实现 Agent Loop、LLM 客户端、真实 GitHub API、评分或最终报告 | Credentials: 用户 D1-D5、PRD V0.2、S2 设计约束、S3-02 离线测试 | Revert Scope: None | Retained Net Assets: V0.1、PRD V0.2、架构设计 V0.1、基础 CLI、只读工具注册表、Mock REST 客户端、证据模型、预算控制和离线测试。
 - P-01: MVP 完成后评估本地 Web UI、更多模型端点和历史报告/本地索引 | Reason for Deferral: 不影响当前 CLI Agent 闭环和安全验收 | Wake-up Timing: S5 MVP 验收后。
