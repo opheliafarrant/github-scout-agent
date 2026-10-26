@@ -27,6 +27,9 @@ python -m venv .venv
 \.venv\Scripts\python.exe -m pytest
 # Explicit real GitHub public REST verification; never runs by default.
 \.venv\Scripts\python.exe -m pytest -m live_github -s
+# Explicit S4-02 real GitHub + Mock LLM scenarios, one at a time.
+\.venv\Scripts\github-scout-agent.exe live-agent-demo --scenario search
+\.venv\Scripts\github-scout-agent.exe live-agent-demo --scenario repository
 ```
 
 Configuration status reads these environment variables without printing their values:

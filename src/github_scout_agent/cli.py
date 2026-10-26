@@ -61,5 +61,26 @@ def mock_demo_command() -> None:
     )
 
 
+@app.command("live-agent-demo")
+def live_agent_demo_command(
+    scenario: str = typer.Option("search", "--scenario", help="One explicit live scenario: search or repository."),
+) -> None:
+    """Run one real GitHub public REST scenario with the Mock LLM (no real model)."""
+
+    import json
+
+    from .live_agent_demo import run_live_agent_demo, summarize_live_result
+
+    if scenario not in {"search", "repository"}:
+        raise typer.BadParameter("scenario must be search or repository")
+    typer.echo("LIVE GitHub REST demo: public GET-only requests; no model API will be called.")
+    result, request_log = run_live_agent_demo(scenario)  # type: ignore[arg-type]
+    for event in result.events:
+        typer.echo(f"[{event.event_type}] {json.dumps(event.details, ensure_ascii=False, sort_keys=True)}")
+    typer.echo(json.dumps(summarize_live_result(result, request_log), ensure_ascii=False, sort_keys=True))
+    if result.status != "completed":
+        raise typer.Exit(code=1)
+
+
 if __name__ == "__main__":
     app()

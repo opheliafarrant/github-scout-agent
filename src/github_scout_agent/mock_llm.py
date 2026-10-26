@@ -28,8 +28,16 @@ class ScriptedMockLLM:
 class ScenarioMockLLM:
     """Rule-based mock that changes its next action from tool feedback."""
 
-    def __init__(self, scenario: str = "empty_rewrite") -> None:
+    def __init__(
+        self,
+        scenario: str = "empty_rewrite",
+        *,
+        initial_query: str | None = None,
+        repository: tuple[str, str] = ("octocat", "Hello-World"),
+    ) -> None:
         self.scenario = scenario
+        self.initial_query = initial_query
+        self.repository = repository
         self.calls = 0
         self.history: list[list[AgentMessage]] = []
 
@@ -49,15 +57,22 @@ class ScenarioMockLLM:
 
         tool_messages = [message for message in messages if message.role == "tool"]
         if not tool_messages:
-            return self._search_call("empty query" if self.scenario == "empty_rewrite" else "agent", self.calls)
+            if self.scenario == "repository_followup":
+                return self._repository_call(self.repository, self.calls)
+            query = self.initial_query or ("empty query" if self.scenario == "empty_rewrite" else "agent")
+            return self._search_call(query, self.calls)
 
         last = self._tool_payload(tool_messages[-1])
         if self.scenario == "empty_rewrite" and self._search_items(last) == 0:
             return self._search_call("broader open source agent", self.calls)
+        if self.scenario in {"readme_followup", "malicious_readme"} and self._search_items(last) == 0:
+            return AssistantResponse(content="Mock found no candidates and stopped safely.", finish_reason="stop")
         if self.scenario == "readme_followup" and last.get("tool_name") == "search_public_repositories":
             return self._readme_call(self._first_repo(last), self.calls)
         if self.scenario == "malicious_readme" and last.get("tool_name") == "search_public_repositories":
             return self._readme_call(self._first_repo(last), self.calls)
+        if self.scenario == "repository_followup" and last.get("tool_name") == "get_public_repository":
+            return self._readme_call({"full_name": f"{self.repository[0]}/{self.repository[1]}"}, self.calls)
         if self.scenario == "license_followup" and last.get("tool_name") == "search_public_repositories":
             return self._license_call(self._first_repo(last), self.calls)
         if self.scenario == "archive_complete":
@@ -95,6 +110,19 @@ class ScenarioMockLLM:
                     id=f"search-{sequence}",
                     name="search_public_repositories",
                     arguments=json.dumps({"query": query}),
+                )
+            ],
+            finish_reason="tool_calls",
+        )
+
+    def _repository_call(self, repository: tuple[str, str], sequence: int) -> AssistantResponse:
+        owner, name = repository
+        return AssistantResponse(
+            tool_calls=[
+                ToolCall(
+                    id=f"repository-{sequence}",
+                    name="get_public_repository",
+                    arguments=json.dumps({"owner": owner, "repo": name}),
                 )
             ],
             finish_reason="tool_calls",
