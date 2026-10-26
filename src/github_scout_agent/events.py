@@ -10,7 +10,10 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 
-_SECRET_KEY = re.compile(r"token|api.?key|authorization|secret|password", re.IGNORECASE)
+_SECRET_KEY = re.compile(
+    r"(?:^|[._-])(?:token|api[._-]?key|api[._-]?token|access[._-]?token|refresh[._-]?token|authorization|auth|secret|password|passwd|client[._-]?secret)(?:$|[._-])",
+    re.IGNORECASE,
+)
 _BEARER = re.compile(r"Bearer\s+\S+", re.IGNORECASE)
 
 

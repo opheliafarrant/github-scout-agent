@@ -2,8 +2,8 @@
 
 ## 1. Task Foundation
 - True Goal: 建立可回退、可测试的 GitHub Scout Agent Python 工程基础和只读工具系统，并按阶段推进受限 Agent Loop 开发。
-- Current Stage: T29-F1 已冻结；下一次 A 级真实验收未授权
-- Active Mainline: T29-P0 修复已通过离线回归与独立审查并提交；等待独立授权的产品级真实验收，不启动本轮之外的开发。
+- Current Stage: 四项产品质量修复及 Go/Swift 复核补充已本地冻结；真实在线验收未重新授权
+- Active Mainline: 本轮离线修复完成，等待用户审阅或后续任务。
 
 ## 2. Frozen Baselines and Inline Evidence
 - F1 Fact Baseline:
@@ -54,6 +54,8 @@
   - F1-45: S5-Final 离线产品审查：物理运行日志已持久化至 `.scout/t25_live_output.txt`。技术链路上 Tool Message 配对、容量网络前阻断（requests=0）及 `tool_choice=none` 确已验证。但产品质量存在明确证据缺口：静态代码显示搜索归一化未保存 GitHub `language` 字段；2 次 GitHub GET 未调取 README 或 Languages/Topics；候选 `Ambar-Gupta22/corvus` 实际为 C++17 仓库，未达到 PRD F-04/F-05/S-05 的证据充分性要求。综合验收判定为 B（技术链路通过，产品质量部分通过），暂不冻结为 A 级 MVP。
   - F1-46: T29-P0 离线修复：RepositoryRecord/SearchResult 保留 GitHub `language` 与未知候选状态；明确任务语言时，已知不匹配候选在候选预算前排除，unknown 不冒充目标语言且不消耗有效候选容量；native/function/tool calling 任务要求已接受候选 README 证据后再优先 Finalization；AgentRunResult 记录 `evidence_complete`/`evidence_gaps`，报告不再仅凭 `model_finalized` 标记 complete；离线 pytest 实际结果为 126 passed、1 deselected，compileall 与 diff check 通过；未发真实请求。
   - F1-47: T29-F1 冻结前检查：T29 修改范围与独立审查一致；README 最小更新为 T25 技术链路通过但产品验收 B、T29 离线 126 passed、下一次 A 级验收需授权；历史报告删除变更未暂存，`.scout`、API Key、T25 原始日志未修改。
+  - F1-48: 当前工作树四项产品质量修复：Go/Swift 英文动词/形容词不再误判语言；明确多语言条件保留全部目标并按 OR 筛选；Usage 的 *_tokens 数值保留，凭据键仍脱敏；直接 get_public_repository 成功结果计入候选预算；成功搜索结果可触发收敛，避免不必要模型轮次。完整离线 pytest 147 passed、1 deselected；compileall、diff check 通过；未发真实请求、未提交。
+  - F1-49: 用户提供 Antigravity 复核结论 PASS WITH NON-BLOCKING NOTES，指出 Go/Swift 介词短语和并列语言漏识别。本轮先复现，再补齐 in go/in swift 及由真实语言名连接的枚举，保留 Go find/Swift and lightweight 的负例；另经生产装配 MockTransport 复现并修复语言匹配集合未随任务更新的问题。完整离线 pytest 157 passed、1 deselected（exit 0），compileall 与 diff check 均 exit 0；用户授权本地提交；没有真实 API 请求。
 - F2 Decision Baseline:
   - F2-01 (D1): MVP 采用 CLI；本地 Web UI 后置；Windows 桌面应用不属于 MVP。
   - F2-02 (D2): 支持无 Token 和用户自配只读 Token；只读公开仓库；不支持私有仓库、账户管理和任何 GitHub 写操作；Token 不进入模型、报告、普通日志或版本控制。
@@ -87,8 +89,10 @@
 - F3-20: T26 网络异常分类提交：1fd73b49bbce3f655fc9b789543833abb8a6bea1 (`fix: safely classify model transport errors`)；修改 model_client.py 与 test_model_client.py；提交时保留用户要求的两份报告删除变更。
 - F3-21: T29-F1 本地冻结提交：`fix: enforce language qualification and evidence-aware finalization`；基于 1fd73b49，最终 SHA 以提交后 `git rev-parse HEAD` 为准；未执行真实请求、reset、clean 或 push。
 
+- 本轮冻结锚点：包含本条记录、父版本为 d1712cb3bb9e3d026598ebc692a344ea173e7559、提交信息为 fix: preserve language intent and enforce research boundaries 的本地提交；完整 SHA 见提交后收据。
+
 ## 3. Current Engineering Flow and Impediments
-- Current Impediment / Stop Point: None for T29-F1 local freeze；A 级产品验收仍需新的明确在线授权；当前工作树还保留两份用户要求删除的报告文件变更。
+- Current Impediment / Stop Point: 无本轮已复现的未解决阻塞；当前结论只覆盖离线场景，真实服务与推荐质量需另行授权验收。两份用户要求删除的报告文件变更保留。
 - [x] T01: 完成 S0 产品需求分析 -> Target Artifact: docs/GitHub-Scout-Agent-产品需求分析-V0.1.md | Verification: 文件已实际读取；V0.1 保留。
 - [x] T02: 完成 S1 产品需求冻结 -> Target Artifact: docs/GitHub-Scout-Agent-PRD-V0.2.md | Verification: 五项决策、MVP、Agent Loop、只读边界、F/S 验收和 S0-S6 路线已写入；文档一致性检查通过。
 - [x] T03: 完成 S2 技术架构设计 -> Target Artifact: docs/GitHub-Scout-Agent-技术架构设计-V0.1.md | Verification: 总体架构、Agent Loop、工具/API、数据、报告、安全、预算、错误、技术栈、测试和 S3-S5 依赖已写入；文档一致性检查通过；待用户验收。
@@ -122,6 +126,7 @@
 - [x] T26: 完成模型网络异常独立诊断与安全分类 -> Target Artifact: src/github_scout_agent/model_client.py、tests/test_model_client.py | Verification: 一次真实 POST 暴露 `ConnectError` + `SSL: UNEXPECTED_EOF_WHILE_READING`；随后安全分类提交 1fd73b49 已冻结；离线 119 passed、1 deselected；未执行第二次真实请求。
 - [x] T29-P0: 完成产品质量缺陷最小修复 -> Target Artifact: src/github_scout_agent/{github_api,github_models,tool_registry,agent_loop,application}.py、tests/test_github_tools.py、tests/test_agent_loop.py、tests/test_application.py | Verification: T25 C++ 候选语言过滤、unknown 语言不占有效候选容量、三候选 README 证据门槛、证据不足 partial、语言元数据保留和原有安全预算回归均通过；126 passed、1 deselected；未发真实请求；待独立审查。
 - [x] T29-F1: 完成修复冻结检查与下一次验收准备 -> Target Artifact: README.md、TASK_STATE.md、T29-P0 源码与测试 | Verification: 独立审查结论 PASS WITH NON-BLOCKING NOTES；离线 126 passed、1 deselected；compileall 与 diff check 通过；仅精确暂存本轮文件，历史报告删除变更不暂存；已创建本地冻结提交。
+- [x] 完成四项运行与产品质量缺陷离线修复 -> Target Artifact: src/github_scout_agent/{application,events,github_api,github_models,agent_loop}.py 与 tests/{test_application,test_agent_loop,test_github_tools}.py | Verification: 意图碰撞、多语言条件、Usage 脱敏、定向候选计数和搜索后收敛均有回归；147 passed、1 deselected；compileall、diff check 通过；未发真实请求，未提交。
 
 ## 4. Ruled-Out Approaches and Side Items
 - Ruled Out: MVP 不采用 GitHub 写操作、私有仓库、Clone、第三方代码执行、任意 Shell、用户真实文件管理、复杂多 Provider 框架、非结构化伪工具调用、多 Agent、RAG、GraphQL 强制迁移和 Windows 桌面应用；T23 未完成完整业务闭环，原因是当前 Tool Call 集合内 GitHub 预算耗尽，未重试或修改 Gate A/B/T17/T19/T21 记录 | Credentials: Gate A/B/T17/T19/T21/T23 一次性记录、DeepSeek 官方文档/价格页、T20/T22 离线和 T23 真实运行证据 | Revert Scope: None | Retained Net Assets: Gate A/B/T17/T19/T21/T23 记录、T16 生产 run 装配、T18 分页保护、T20 Agent 收敛、T22 Finalization、T23 真实候选/证据和 partial report。

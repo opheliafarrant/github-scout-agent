@@ -147,6 +147,35 @@ def test_required_language_filters_known_mismatch_without_consuming_capacity() -
     assert [item.full_name for item in result.data.unverified_items] == ["octo/unknown"]
     assert result.data.excluded_language_count == 1
     assert result.data.required_language == "Python"
+    assert result.data.required_languages == ["Python"]
+    assert budget.candidates_used == 2
+
+
+def test_multiple_required_languages_accept_either_requested_language() -> None:
+    seen: list[httpx.Request] = []
+    items = [
+        _repo("octo/ts") | {"language": "TypeScript"},
+        _repo("octo/python") | {"language": "Python"},
+        _repo("octo/swift") | {"language": "Swift"},
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _response(request, 200, {"total_count": len(items), "items": items})
+
+    budget = RequestBudget(max_candidates=3)
+    with GitHubRestClient(
+        budget=budget,
+        required_languages=("TypeScript", "Python"),
+        transport=_transport(handler, seen),
+    ) as client:
+        result = build_github_tool_registry(client).dispatch(
+            "search_public_repositories", {"query": "typescript python agents"}
+        )
+
+    assert [item.full_name for item in result.data.items] == ["octo/ts", "octo/python"]
+    assert result.data.required_language is None
+    assert result.data.required_languages == ["TypeScript", "Python"]
+    assert result.data.excluded_language_count == 1
     assert budget.candidates_used == 2
 
 
@@ -165,6 +194,48 @@ def test_required_language_blocks_known_mismatch_on_repository_detail() -> None:
     assert result.ok is False
     assert result.error.code == "language_mismatch"
     assert result.request_count == 1
+
+
+def test_direct_repository_details_consume_candidate_capacity_and_block_overflow() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        name = request.url.path.removeprefix("/repos/")
+        return _response(request, 200, _repo(name) | {"language": "Python"})
+
+    budget = RequestBudget(max_candidates=3, max_github_requests=8)
+    with GitHubRestClient(budget=budget, transport=_transport(handler, seen), max_retries=0) as client:
+        registry = build_github_tool_registry(client)
+        results = [
+            registry.dispatch("get_public_repository", {"owner": "octo", "repo": f"repo-{index}"})
+            for index in range(4)
+        ]
+
+    assert [result.ok for result in results] == [True, True, True, False]
+    assert results[-1].error.code == "candidate_capacity_full"
+    assert [result.request_count for result in results] == [1, 1, 1, 0]
+    assert budget.candidates_used == 3
+    assert budget.accepted_candidate_ids == {f"octo/repo-{i}" for i in range(3)}
+    assert len(seen) == 3
+
+
+def test_repeated_direct_repository_detail_does_not_spend_candidate_slots_twice() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _response(request, 200, _repo("octo/repeat") | {"language": "Python"})
+
+    budget = RequestBudget(max_candidates=1, max_github_requests=4)
+    with GitHubRestClient(budget=budget, transport=_transport(handler, seen), max_retries=0) as client:
+        registry = build_github_tool_registry(client)
+        one = registry.dispatch("get_public_repository", {"owner": "octo", "repo": "repeat"})
+        two = registry.dispatch("get_public_repository", {"owner": "octo", "repo": "repeat"})
+
+    assert one.ok and two.ok
+    assert one.request_count == two.request_count == 1
+    assert budget.candidates_used == 1
+    assert budget.accepted_candidate_ids == {"octo/repeat"}
+    assert len(seen) == 2
 
 
 def test_search_uses_small_mvp_page_size_and_rejects_larger_model_value() -> None:

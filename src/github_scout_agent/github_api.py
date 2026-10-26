@@ -222,6 +222,7 @@ class GitHubRestClient:
         fallback_retry_delay: float = DEFAULT_FALLBACK_RETRY_DELAY,
         readme_max_chars: int = DEFAULT_README_CHARS,
         required_language: str | None = None,
+        required_languages: tuple[str, ...] | list[str] | None = None,
     ) -> None:
         if max_retries < 0:
             raise ValueError("max_retries cannot be negative")
@@ -237,7 +238,18 @@ class GitHubRestClient:
         self._max_retry_delay = max_retry_delay
         self._fallback_retry_delay = fallback_retry_delay
         self._readme_max_chars = readme_max_chars
-        self.required_language = normalize_language_name(required_language)
+        requested_languages = list(required_languages or ())
+        if required_language:
+            requested_languages.append(required_language)
+        normalized_languages: list[str] = []
+        seen_language_keys: set[str] = set()
+        for value in requested_languages:
+            language = normalize_language_name(value)
+            if language and language.casefold() not in seen_language_keys:
+                seen_language_keys.add(language.casefold())
+                normalized_languages.append(language)
+        self.required_languages = tuple(normalized_languages)
+        self.required_language = self.required_languages[0] if len(self.required_languages) == 1 else None
         self.request_log: list[dict[str, object]] = []
         headers = {
             "Accept": "application/vnd.github+json",
@@ -253,6 +265,12 @@ class GitHubRestClient:
             follow_redirects=False,
             transport=transport,
         )
+
+    @property
+    def _required_language_keys(self) -> frozenset[str]:
+        """Derive matching keys from the task's current language constraints."""
+
+        return frozenset(language.casefold() for language in self.required_languages)
 
     def close(self) -> None:
         self._client.close()
@@ -423,12 +441,12 @@ class GitHubRestClient:
             if self._is_public_repository(item) and identity and identity not in seen_ids:
                 seen_ids.add(identity)
                 public_item_count += 1
-                if self.required_language:
+                if self.required_languages:
                     raw_language = item.get("language")
                     language = normalize_language_name(raw_language) if isinstance(raw_language, str) else None
                     if language is None:
                         unverified_items.append(item)
-                    elif language.casefold() == self.required_language.casefold():
+                    elif language.casefold() in self._required_language_keys:
                         public_items.append(item)
                     else:
                         excluded_language_count += 1
@@ -459,6 +477,7 @@ class GitHubRestClient:
             excluded_language_count=excluded_language_count,
             unverified_items=unverified_records,
             required_language=self.required_language,
+            required_languages=list(self.required_languages),
             source=_source(source_url, captured_at),
         )
 
@@ -474,6 +493,13 @@ class GitHubRestClient:
     def get_public_repository(self, *, owner: str, repo: str) -> RepositoryRecord:
         owner = validate_owner_repo_part(owner, "owner")
         repo = validate_owner_repo_part(repo, "repo")
+        requested_identity = f"{owner}/{repo}"
+        if self.budget.candidates_full and not self.budget.is_candidate_accepted(requested_identity):
+            raise GithubApiError(
+                "candidate_capacity_full",
+                "safety",
+                "candidate capacity is full; repository metadata for a new candidate is blocked",
+            )
         payload, source_url, captured_at = self._request_json(f"/repos/{owner}/{repo}")
         if not isinstance(payload, Mapping):
             raise GithubApiError("invalid_repository_payload", "schema", "GitHub repository response is not an object")
@@ -481,14 +507,21 @@ class GitHubRestClient:
             raise GithubApiError("private_repository_blocked", "safety", "private repositories are not supported")
         record = _normalize_repository(payload, source_url, captured_at)
         if (
-            self.required_language
+            self.required_languages
             and record.language
-            and record.language.casefold() != self.required_language.casefold()
+            and record.language.casefold() not in self._required_language_keys
         ):
             raise GithubApiError(
                 "language_mismatch",
                 "safety",
-                f"repository language does not satisfy required {self.required_language} constraint",
+                "repository language does not satisfy the requested language constraint",
+            )
+        accepted, _ = self.budget.take_candidate_ids([record.full_name])
+        if not accepted:
+            raise GithubApiError(
+                "candidate_capacity_full",
+                "safety",
+                "candidate capacity is full; repository metadata for a new candidate is blocked",
             )
         return record
 

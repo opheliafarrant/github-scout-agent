@@ -88,6 +88,7 @@ class SearchResult(BaseModel):
     excluded_language_count: int = Field(default=0, ge=0)
     unverified_items: list[RepositoryRecord] = Field(default_factory=list)
     required_language: str | None = None
+    required_languages: list[str] = Field(default_factory=list)
     source: SourceRef
 
 

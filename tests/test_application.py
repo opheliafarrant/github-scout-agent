@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 
 import httpx
+import pytest
 from pydantic import SecretStr
 
-from github_scout_agent.application import infer_required_language, render_mvp_report, run_research_task
+from github_scout_agent.application import infer_required_language, infer_required_languages, render_mvp_report, run_research_task
 from github_scout_agent.agent_loop import AgentRunResult
 from github_scout_agent.github_models import ToolError, ToolResult
 from github_scout_agent.budget import RequestBudget
@@ -167,3 +168,108 @@ def test_task_language_inference_is_not_global() -> None:
     assert infer_required_language("find small Python agent repositories") == "Python"
     assert infer_required_language("find native C++ runtimes") == "C++"
     assert infer_required_language("find small agent repositories") is None
+
+
+def test_language_inference_ignores_english_go_and_swift_collisions() -> None:
+    assert infer_required_languages("Go find small agent repositories") == ()
+    assert infer_required_languages("Please go ahead and search for agent frameworks") == ()
+    assert infer_required_languages("Let us go through GitHub agents") == ()
+    assert infer_required_languages("Go agent repositories") == ("Go",)
+    assert infer_required_languages("A swift agent framework") == ()
+    assert infer_required_languages("Swift and lightweight agents") == ()
+    assert infer_required_languages("Go and find Python agents") == ("Python",)
+    assert infer_required_languages("Swift and lightweight Python agents") == ("Python",)
+    assert infer_required_languages("Find repositories written in Swift") == ("Swift",)
+    assert infer_required_languages("Go language agent repositories") == ("Go",)
+
+
+def test_multiple_language_constraints_preserve_all_requested_languages() -> None:
+    assert infer_required_languages("Find TypeScript or Python agents") == ("TypeScript", "Python")
+
+
+@pytest.mark.parametrize(
+    ("task", "expected"),
+    [
+        ("find agents in go", ("Go",)),
+        ("python or go", ("Python", "Go")),
+        ("agents in swift", ("Swift",)),
+        ("python or swift", ("Python", "Swift")),
+        ("agents in Go or Python", ("Go", "Python")),
+        ("tools in swift", ("Swift",)),
+        ("Go, Swift or Python agents", ("Go", "Swift", "Python")),
+    ],
+)
+def test_language_prepositions_and_language_lists(task, expected) -> None:
+    assert infer_required_languages(task) == expected
+
+
+@pytest.mark.parametrize(
+    ("task", "expected_languages"),
+    [
+        ("find Python agents", ("Python",)),
+        ("find TypeScript or Python agents", ("TypeScript", "Python")),
+        ("python or go", ("Python", "Go")),
+    ],
+)
+def test_task_language_constraints_reach_production_search(task, expected_languages) -> None:
+    model_requests = []
+    github_requests = []
+
+    def model_handler(request):
+        model_requests.append(json.loads(request.content))
+        message = {"role": "assistant", "content": "Compared returned metadata; unverified features remain unknown."}
+        if len(model_requests) == 1:
+            message = {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{
+                    "id": "qualified-search",
+                    "type": "function",
+                    "function": {
+                        "name": "search_public_repositories",
+                        "arguments": json.dumps({"query": "agent"}),
+                    },
+                }],
+            }
+        return httpx.Response(200, json={"choices": [{"message": message}]}, request=request)
+
+    def github_handler(request):
+        github_requests.append(request)
+        assert request.method == "GET"
+        assert request.url.host == "api.github.com"
+        assert request.url.params["per_page"] == "5"
+        items = [{
+            "full_name": f"octo/{language.lower() if language else 'unknown'}",
+            "html_url": f"https://github.com/octo/{language.lower() if language else 'unknown'}",
+            "private": False,
+            "visibility": "public",
+            "language": language,
+            "description": "Python Go Swift TypeScript mentioned here are not language evidence.",
+        } for language in ("Python", "TypeScript", "Go", "Swift", None)]
+        return httpx.Response(200, json={"items": items, "total_count": len(items)}, request=request)
+
+    budget = RequestBudget(max_candidates=3, max_model_calls=5, max_github_requests=8)
+    with OpenAICompatibleClient(
+        base_url="https://model.example.test/v1", model="mock-model",
+        api_key=SecretStr("offline-language-test-key"), budget=budget,
+        transport=httpx.MockTransport(model_handler),
+    ) as model, GitHubRestClient(
+        budget=budget, max_retries=0, transport=httpx.MockTransport(github_handler),
+    ) as github:
+        # Production constructs a client before the application assigns task constraints.
+        assert github.required_languages == ()
+        result = run_research_task(task, model=model, github=github, budget=budget)
+
+    search = result.tool_results[0].data
+    assert set(item.language for item in search.items) == set(expected_languages)
+    assert search.required_languages == list(expected_languages)
+    assert search.excluded_language_count == 4 - len(expected_languages)
+    assert [item.language for item in search.unverified_items] == [None]
+    assert result.status == "completed"
+    assert result.evidence_complete is True
+    assert budget.candidates_used == len(expected_languages)
+    assert budget.github_requests_used == len(github_requests) == 1
+    assert budget.model_calls_used == len(model_requests) == 2
+    feedback = next(m for m in model_requests[1]["messages"] if m["role"] == "tool")
+    assert feedback["tool_call_id"] == "qualified-search"
+    assert set(item["language"] for item in json.loads(feedback["content"])["data"]["items"]) == set(expected_languages)

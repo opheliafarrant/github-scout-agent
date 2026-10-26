@@ -143,11 +143,10 @@ def test_full_candidate_capacity_does_not_block_readme_followup_for_accepted_rep
     assert result.tool_results[1].ok is True
 
 
-def test_finalization_reserve_turns_t21_like_trace_into_complete_report() -> None:
+def test_successful_search_can_finalize_without_an_extra_research_model_turn() -> None:
     responses = [
         AssistantResponse(tool_calls=[ToolCall(id="search", name="search_public_repositories", arguments=json.dumps({"query": "first"}))]),
-        AssistantResponse(tool_calls=[ToolCall(id="readme", name="get_public_readme", arguments=json.dumps({"owner": "octo", "repo": "repo-0"}))]),
-        AssistantResponse(content="Final comparison based on verified evidence."),
+        AssistantResponse(content="Final comparison based on returned repository metadata."),
     ]
     mock = ScriptedMockLLM(responses)
     budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=20_000)
@@ -162,16 +161,14 @@ def test_finalization_reserve_turns_t21_like_trace_into_complete_report() -> Non
     assert result.status == "completed"
     assert result.termination_reason == "model_finalized"
     assert result.final_text.startswith("Final comparison")
-    assert mock.tool_choices == ["auto", "auto", "none"]
-    assert budget.github_requests_used == 2
+    assert mock.tool_choices == ["auto", "none"]
+    assert budget.github_requests_used == 1
 
 
-def test_finalization_stops_t21_like_repeated_search_after_evidence() -> None:
+def test_finalization_prevents_repeated_search_after_candidates_are_found() -> None:
     responses = [
         AssistantResponse(tool_calls=[ToolCall(id="search-1", name="search_public_repositories", arguments=json.dumps({"query": "first"}))]),
-        AssistantResponse(tool_calls=[ToolCall(id="search-2", name="search_public_repositories", arguments=json.dumps({"query": "different"}))]),
-        AssistantResponse(tool_calls=[ToolCall(id="readme", name="get_public_readme", arguments=json.dumps({"owner": "octo", "repo": "repo-0"}))]),
-        AssistantResponse(content="Final comparison after bounded evidence collection."),
+        AssistantResponse(content="Final comparison after one bounded search."),
     ]
     mock = ScriptedMockLLM(responses)
     budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=20_000)
@@ -185,14 +182,13 @@ def test_finalization_stops_t21_like_repeated_search_after_evidence() -> None:
 
     assert result.status == "completed"
     assert result.termination_reason == "model_finalized"
-    assert mock.tool_choices == ["auto", "auto", "auto", "none"]
-    assert budget.github_requests_used == 2
+    assert mock.tool_choices == ["auto", "none"]
+    assert budget.github_requests_used == 1
 
 
 def test_finalization_does_not_execute_new_tool_calls() -> None:
     responses = [
         AssistantResponse(tool_calls=[ToolCall(id="search", name="search_public_repositories", arguments=json.dumps({"query": "first"}))]),
-        AssistantResponse(tool_calls=[ToolCall(id="readme", name="get_public_readme", arguments=json.dumps({"owner": "octo", "repo": "repo-0"}))]),
         AssistantResponse(tool_calls=[ToolCall(id="late", name="search_public_repositories", arguments=json.dumps({"query": "late"}))]),
     ]
     mock = ScriptedMockLLM(responses)
@@ -207,8 +203,8 @@ def test_finalization_does_not_execute_new_tool_calls() -> None:
 
     assert result.status == "terminated"
     assert result.termination_reason == "finalization_tool_call"
-    assert mock.tool_choices == ["auto", "auto", "none"]
-    assert budget.github_requests_used == 2
+    assert mock.tool_choices == ["auto", "none"]
+    assert budget.github_requests_used == 1
 
 
 def _t24_batch_handler(request: httpx.Request) -> httpx.Response:
@@ -347,8 +343,8 @@ def test_t24_normal_research_path_does_not_force_finalization() -> None:
         ).run("normal")
 
     assert result.status == "completed"
-    assert result.termination_reason == "model_completed"
-    assert mock.tool_choices == ["auto", "auto"]
+    assert result.termination_reason == "model_finalized"
+    assert mock.tool_choices == ["auto", "none"]
 
 
 def _t29_python_evidence_handler(request: httpx.Request) -> httpx.Response:
@@ -486,9 +482,10 @@ def test_capacity_blocked_batch_reaches_next_model_without_evidence_policy(requi
         ).run("find agent repositories")
 
     assert result.status == "completed"
-    assert result.termination_reason == "model_completed"
+    assert result.termination_reason == "model_finalized"
     assert result.final_text == "Recommendation based on the returned candidates."
     assert model.calls == budget.model_calls_used == 2
+    assert model.tool_choices == ["auto", "none"]
     assert budget.github_requests_used == 1
     assert budget.candidates_used == 3
     tool_messages = [message for message in model.history[1] if message.role == "tool"]
@@ -644,7 +641,7 @@ def test_repeated_capacity_blocked_searches_stop_at_model_budget_without_more_ne
 
 
 @pytest.mark.parametrize("empty_language", ["", "   "])
-def test_empty_required_language_keeps_model_budget_safety_stop(empty_language: str) -> None:
+def test_empty_required_language_does_not_disable_safe_finalization(empty_language: str) -> None:
     responses = [
         AssistantResponse(tool_calls=[ToolCall(id=f"search-{index}", name="search_public_repositories", arguments=json.dumps({"query": f"query {index}"}))])
         for index in range(5)
@@ -659,8 +656,8 @@ def test_empty_required_language_keeps_model_budget_safety_stop(empty_language: 
         ).run("repeat empty language policy")
 
     assert result.status == "terminated"
-    assert result.termination_reason == "model_calls"
-    assert budget.model_calls_used == 5
+    assert result.termination_reason == "finalization_tool_call"
+    assert budget.model_calls_used == 2
     assert budget.github_requests_used == 1
 
 
@@ -1031,11 +1028,74 @@ def test_multiple_tool_calls_mid_budget_stop_produces_blocked_result_for_remaini
 
 def test_event_recorder_redacts_credentials() -> None:
     recorder = EventRecorder(clock=lambda: 1.0)
-    recorder.emit("test", api_key="secret", authorization="Bearer secret", nested={"token": "secret"})
+    recorder.emit(
+        "test",
+        api_key="secret",
+        authorization="Bearer secret",
+        nested={"token": "secret"},
+        usage={
+            "prompt_tokens": 101,
+            "completion_tokens": 202,
+            "total_tokens": 303,
+            "prompt_cache_hit_tokens": 4,
+            "prompt_cache_miss_tokens": 5,
+        },
+    )
 
     encoded = recorder.events[0].model_dump_json()
     assert "secret" not in encoded
-    assert "redacted" in encoded
+    assert '"prompt_tokens":101' in encoded
+    assert '"completion_tokens":202' in encoded
+    assert '"total_tokens":303' in encoded
+    assert '"prompt_cache_hit_tokens":4' in encoded
+    assert '"prompt_cache_miss_tokens":5' in encoded
+    assert encoded.count("<redacted>") >= 3
+
+
+def test_search_candidates_can_trigger_finalization_without_redundant_model_turn() -> None:
+    mock = ScriptedMockLLM([
+        AssistantResponse(tool_calls=[ToolCall(id="search", name="search_public_repositories", arguments=json.dumps({"query": "agents"}))]),
+        AssistantResponse(content="Compared the returned repository metadata."),
+    ])
+    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=20_000)
+    with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_full_pool_handler), max_retries=0) as client:
+        result = AgentLoop(
+            model=mock,
+            tools=build_github_tool_registry(client),
+            budget=budget,
+            config=AgentLoopConfig(finalization_reserve_calls=1),
+        ).run("find agent repositories")
+
+    assert result.status == "completed"
+    assert result.termination_reason == "model_finalized"
+    assert mock.tool_choices == ["auto", "none"]
+    assert budget.github_requests_used == 1
+    assert budget.model_calls_used == 2
+
+
+def test_language_constraint_policy_is_added_for_multiple_requested_languages() -> None:
+    class CaptureModel:
+        def __init__(self) -> None:
+            self.messages = []
+
+        def complete(self, messages, tools, *, tool_choice="auto"):
+            self.messages.append(list(messages))
+            return AssistantResponse(content="done")
+
+    model = CaptureModel()
+    budget = RequestBudget(max_model_calls=1)
+    with GitHubRestClient(required_languages=("TypeScript", "Python"), transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"total_count": 0, "items": []}, request=request)
+    )) as client:
+        AgentLoop(
+            model=model,
+            tools=build_github_tool_registry(client),
+            budget=budget,
+            config=AgentLoopConfig(required_languages=("TypeScript", "Python")),
+        ).run("find TypeScript or Python agents")
+
+    policy = model.messages[0][1].content
+    assert "TypeScript or Python" in policy
 
 
 def test_malicious_readme_remains_data_and_never_creates_execution_event() -> None:

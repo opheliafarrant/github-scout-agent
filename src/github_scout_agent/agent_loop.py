@@ -33,6 +33,7 @@ class AgentLoopConfig:
     max_repeated_actions: int = 1
     finalization_reserve_calls: int = 0
     required_language: str | None = None
+    required_languages: tuple[str, ...] = ()
     require_candidate_readme: bool = False
 
 
@@ -69,13 +70,14 @@ class AgentLoop:
     def run(self, user_task: str) -> AgentRunResult:
         self.budget.start_task()
         messages = [AgentMessage(role="user", content=user_task)]
-        if self.config.required_language or self.config.require_candidate_readme:
+        if self._required_languages() or self.config.require_candidate_readme:
             policy_lines = [
                 "Research policy: do not recommend candidates without evidence for the requested constraints.",
                 "Treat repository language metadata as authoritative for language qualification; null/unknown is not a match.",
             ]
-            if self.config.required_language:
-                policy_lines.append(f"Required repository language: {self.config.required_language}.")
+            required_languages = self._required_languages()
+            if required_languages:
+                policy_lines.append(f"Accepted repository languages: {' or '.join(required_languages)}.")
             if self.config.require_candidate_readme:
                 policy_lines.append(
                     "Before final recommendation, obtain README evidence for each accepted candidate; "
@@ -303,6 +305,20 @@ class AgentLoop:
         research_limit = max(self.budget.max_model_calls - self.config.finalization_reserve_calls, 0)
         return self.budget.model_calls_used >= research_limit
 
+    def _required_languages(self) -> tuple[str, ...]:
+        values = list(self.config.required_languages)
+        if self.config.required_language:
+            values.append(self.config.required_language)
+        result: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            normalized = value.strip()
+            key = normalized.casefold()
+            if normalized and key not in seen:
+                seen.add(key)
+                result.append(normalized)
+        return tuple(result)
+
     def _github_budget_boundary_reached(self) -> bool:
         return self.budget.github_requests_remaining == 0
 
@@ -322,14 +338,23 @@ class AgentLoop:
             "get_repository_license",
             "get_repository_languages_and_topics",
         }
-        return any(result.ok and result.tool_name in evidence_tools for result in tool_results)
+        return any(
+            result.ok
+            and (
+                result.tool_name in evidence_tools
+                or result.tool_name == "search_public_repositories"
+            )
+            for result in tool_results
+        )
 
     def _evidence_complete(
         self,
         tool_results: list[ToolResult],
         executed_calls: list[tuple[ToolCall, ToolResult]],
     ) -> tuple[bool, list[str]]:
-        if not self.config.require_candidate_readme and not self.config.required_language:
+        required_languages = self._required_languages()
+        required_language_keys = {language.casefold() for language in required_languages}
+        if not self.config.require_candidate_readme and not required_languages:
             return True, []
 
         candidates: dict[str, Any] = {}
@@ -366,22 +391,22 @@ class AgentLoop:
                     readme_available.add(identity)
             if call.name == "get_public_repository" and result.ok and identity in candidates:
                 language = getattr(result.data, "language", None)
-                if self.config.required_language and isinstance(language, str) and language.casefold() == self.config.required_language.casefold():
+                if isinstance(language, str) and language.casefold() in required_language_keys:
                     language_verified.add(identity)
             if call.name == "get_repository_languages_and_topics" and result.ok and identity in candidates:
                 languages = getattr(result.data, "languages", {}) or {}
-                if self.config.required_language and any(
-                    isinstance(name, str) and name.casefold() == self.config.required_language.casefold()
+                if any(
+                    isinstance(name, str) and name.casefold() in required_language_keys
                     for name in languages
                 ):
                     language_verified.add(identity)
 
         for identity, record in candidates.items():
-            if self.config.required_language:
+            if required_languages:
                 language = getattr(record, "language", None)
                 if not (
                     isinstance(language, str)
-                    and language.casefold() == self.config.required_language.casefold()
+                    and language.casefold() in required_language_keys
                 ) and identity not in language_verified:
                     gaps.append(f"language not verified: {identity}")
             if self.config.require_candidate_readme:
