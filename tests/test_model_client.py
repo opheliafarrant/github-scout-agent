@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import ssl
 
 import httpx
 import pytest
@@ -317,3 +318,110 @@ def test_github_token_is_not_added_to_model_request() -> None:
     assert request.headers["authorization"] == f"Bearer {MODEL_KEY}"
     assert GITHUB_KEY not in request.content.decode("utf-8")
     assert GITHUB_KEY not in str(request.headers)
+
+
+def test_t27_network_and_timeout_errors_are_safely_classified_without_leaks() -> None:
+    cases = [
+        (
+            httpx.ConnectError("Connection refused"),
+            "network_error",
+            "network",
+            True,
+            "ConnectError",
+        ),
+        (
+            httpx.ProxyError("502 Bad Gateway from proxy"),
+            "network_error",
+            "network",
+            True,
+            "ProxyError",
+        ),
+        (
+            httpx.RemoteProtocolError("Server disconnected"),
+            "network_error",
+            "network",
+            True,
+            "RemoteProtocolError",
+        ),
+        (
+            httpx.ConnectTimeout("Connect timeout"),
+            "timeout",
+            "timeout",
+            True,
+            None,
+        ),
+        (
+            httpx.ReadTimeout("Read timeout"),
+            "timeout",
+            "timeout",
+            True,
+            None,
+        ),
+    ]
+
+    for exc_to_raise, expected_code, expected_cat, expected_retry, expected_marker in cases:
+        calls = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            raise exc_to_raise
+
+        client, _ = _client(handler)
+        with client, pytest.raises(ModelAdapterError) as caught:
+            client.complete([AgentMessage(role="user", content="x")], [])
+
+        assert caught.value.code == expected_code
+        assert caught.value.category == expected_cat
+        assert caught.value.retryable is expected_retry
+        assert calls == 1
+        if expected_marker:
+            assert expected_marker in str(caught.value)
+
+    # TLS specific exceptions
+    tls_cases = [
+        (ssl.SSLEOFError(8, "EOF occurred in violation of protocol"), "ConnectError[tls_unexpected_eof]"),
+        (ssl.SSLCertVerificationError(1, "certificate verify failed"), "ConnectError[tls_certificate]"),
+        (ssl.SSLError("generic ssl error"), "ConnectError[tls]"),
+    ]
+    for ssl_cause, expected_marker in tls_cases:
+        calls = 0
+        conn_err = httpx.ConnectError("tls connection failure")
+        conn_err.__cause__ = ssl_cause
+
+        def tls_handler(request: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            raise conn_err
+
+        client, _ = _client(tls_handler)
+        with client, pytest.raises(ModelAdapterError) as caught:
+            client.complete([AgentMessage(role="user", content="x")], [])
+
+        assert caught.value.code == "network_error"
+        assert caught.value.category == "network"
+        assert caught.value.retryable is True
+        assert calls == 1
+        assert expected_marker in str(caught.value)
+
+    # Malicious exception message with simulated key and credentials
+    malicious_text = f"Connection failed with Bearer {MODEL_KEY} on https://api.deepseek.com/chat?token={GITHUB_KEY}"
+    malicious_exc = httpx.ConnectError(malicious_text)
+    calls = 0
+
+    def leak_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        raise malicious_exc
+
+    client, _ = _client(leak_handler)
+    with client, pytest.raises(ModelAdapterError) as caught:
+        client.complete([AgentMessage(role="user", content="x")], [])
+
+    msg = str(caught.value)
+    assert caught.value.code == "network_error"
+    assert calls == 1
+    assert MODEL_KEY not in msg
+    assert GITHUB_KEY not in msg
+    assert "https://" not in msg
+    assert "ConnectError" in msg

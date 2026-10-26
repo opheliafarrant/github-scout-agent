@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 import json
 import math
+import ssl
 from collections.abc import Mapping
 from typing import Literal
 from urllib.parse import urlsplit, urlunsplit
@@ -48,6 +49,42 @@ def _validate_base_url(value: str) -> str:
     else:
         endpoint_path = f"{path}/chat/completions" if path else "/chat/completions"
     return urlunsplit((parsed.scheme, parsed.netloc, endpoint_path, "", ""))
+
+
+_SAFE_ERRNO_WHITELIST = frozenset({104, 110, 111, 101, 10051, 10054, 10060, 10061, 11001})
+
+
+def _safe_network_error_detail(exc: httpx.RequestError) -> str:
+    """Classify network errors safely by type and numerical errno without persisting raw text."""
+
+    if isinstance(exc, httpx.ProxyError):
+        return "ProxyError"
+    if isinstance(exc, httpx.RemoteProtocolError):
+        return "RemoteProtocolError"
+    if isinstance(exc, httpx.ConnectError):
+        cause = getattr(exc, "__cause__", None)
+        if cause is not None:
+            cause_type = type(cause).__name__
+            if cause_type == "SSLCertVerificationError":
+                return "ConnectError[tls_certificate]"
+            if cause_type == "SSLEOFError":
+                return "ConnectError[tls_unexpected_eof]"
+            if isinstance(cause, ssl.SSLError) or "SSL" in cause_type:
+                return "ConnectError[tls]"
+            errno_val = getattr(cause, "winerror", None) or getattr(cause, "errno", None)
+            if isinstance(errno_val, int) and errno_val in _SAFE_ERRNO_WHITELIST:
+                return f"ConnectError[errno={errno_val}]"
+        errno_val = getattr(exc, "winerror", None) or getattr(exc, "errno", None)
+        if isinstance(errno_val, int) and errno_val in _SAFE_ERRNO_WHITELIST:
+            return f"ConnectError[errno={errno_val}]"
+        return "ConnectError"
+    if isinstance(exc, httpx.ReadError):
+        return "ReadError"
+    if isinstance(exc, httpx.WriteError):
+        return "WriteError"
+    if isinstance(exc, httpx.ProtocolError):
+        return "ProtocolError"
+    return "RequestError"
 
 
 class OpenAICompatibleClient:
@@ -167,7 +204,8 @@ class OpenAICompatibleClient:
         except httpx.TimeoutException as exc:
             raise ModelAdapterError("model request timed out", code="timeout", category="timeout", retryable=True) from exc
         except httpx.RequestError as exc:
-            raise ModelAdapterError("model network request failed", code="network_error", category="network", retryable=True) from exc
+            detail = _safe_network_error_detail(exc)
+            raise ModelAdapterError(f"model network request failed ({detail})", code="network_error", category="network", retryable=True) from exc
 
         if status_code < 200 or status_code >= 300:
             raise self._http_error(status_code, content)
