@@ -2,8 +2,8 @@
 
 ## 1. Task Foundation
 - True Goal: 建立可回退、可测试的 GitHub Scout Agent Python 工程基础和只读工具系统，并按阶段推进受限 Agent Loop 开发。
-- Current Stage: T18-P0 搜索响应预算适配修复（完成）
-- Active Mainline: T18: 以最小分页上限修复 T17 搜索响应超限，并完成离线反例/闭环回归；下一次真实运行需新授权。
+- Current Stage: T19 最终真实 MVP 端到端验收（完成，失败）
+- Active Mainline: T19: 唯一真实 MVP 命令已执行并达到 GitHub 请求预算；不重试，等待用户审阅。
 
 ## 2. Frozen Baselines and Inline Evidence
 - F1 Fact Baseline:
@@ -42,6 +42,7 @@
   - F1-33: T16-P0 静态与离线核验：生产 `run` 使用现有 ModelClient/AgentLoop/ToolRegistry/GitHubClient；真实路径 GitHub max_retries=0；来源报告包含候选 URL、API 来源、缺失项、预算、终止和模型解释分离；默认 pytest 仍为 101 passed、1 deselected。
   - F1-34: T17 唯一真实运行：模型请求 1 次、GitHub GET 1 次；模型返回 2 个 Tool Calls；首个搜索响应 76091 bytes 超过 65536 response budget，程序以 `response_bytes` 安全终止；无重试、无最终报告、usage/cost unknown。
   - F1-35: T18-P0 将公开仓库搜索默认/最大 `per_page` 收紧为 5，保留 64 KiB 流式响应保护；离线复现 76 KiB 仍拒绝，小分页正常解析、重复身份和候选容量语义均通过；默认 pytest 实际结果为 104 passed、1 deselected。
+  - F1-36: T19 唯一真实运行：模型请求 4 次、GitHub GET 8 次、候选 3 个；首轮搜索真实返回 3 个公开候选并完成两次 README 补查；后续模型重复搜索/补查，GitHub 预算达到 8/8，程序以 `github_requests` 安全终止；usage/cost unknown，无重试。
 - F2 Decision Baseline:
   - F2-01 (D1): MVP 采用 CLI；本地 Web UI 后置；Windows 桌面应用不属于 MVP。
   - F2-02 (D2): 支持无 Token 和用户自配只读 Token；只读公开仓库；不支持私有仓库、账户管理和任何 GitHub 写操作；Token 不进入模型、报告、普通日志或版本控制。
@@ -66,10 +67,11 @@
   - F3-12: Gate B-P0 实施提交：8c618574bbe70ce8169f74ec6af7bd0bce878499 (`test: add offline gate b compatibility chain`)；未调用真实模型或 GitHub API。
   - F3-13: Gate B 受控在线入口提交：9667636e7048f0ecfd33f26c7787fb3ae8068b73 (`feat: add controlled online gate b`)；仅完成前置阻断验证。
   - F3-14: Agent usage event 修复提交：89ebd81e5a2a6ecc995bbe72e6f124ffcb8b024d (`fix: record model usage in agent events`)。
+  - F3-15: T19 状态提交：待本次状态提交记录；未修改代码、未重试请求。
   - F3-15: Gate B 回归测试修复提交：待本次状态提交记录；未新增任何网络请求。
 
 ## 3. Current Engineering Flow and Impediments
-- Current Impediment / Stop Point: T17 历史运行因搜索响应超限失败且不得重试；T18 已完成离线修复；下一次真实 MVP 运行必须获得新授权。
+- Current Impediment / Stop Point: T19 因模型重复搜索/补查消耗完 GitHub 请求预算，未生成最终报告；不得重试，后续修复需新授权。
 - [x] T01: 完成 S0 产品需求分析 -> Target Artifact: docs/GitHub-Scout-Agent-产品需求分析-V0.1.md | Verification: 文件已实际读取；V0.1 保留。
 - [x] T02: 完成 S1 产品需求冻结 -> Target Artifact: docs/GitHub-Scout-Agent-PRD-V0.2.md | Verification: 五项决策、MVP、Agent Loop、只读边界、F/S 验收和 S0-S6 路线已写入；文档一致性检查通过。
 - [x] T03: 完成 S2 技术架构设计 -> Target Artifact: docs/GitHub-Scout-Agent-技术架构设计-V0.1.md | Verification: 总体架构、Agent Loop、工具/API、数据、报告、安全、预算、错误、技术栈、测试和 S3-S5 依赖已写入；文档一致性检查通过；待用户验收。
@@ -92,8 +94,9 @@
 - [x] T16-P0: 完成最终真实 MVP 端到端验收准备 -> Target Artifact: src/github_scout_agent/application.py、src/github_scout_agent/cli.py、tests/test_application.py | Verification: 生产 run 链路、确认门、预算、GET-only/公开边界、MockTransport 业务闭环、来源报告和离线回归均已核实；未发真实请求。
 - [x] T17: 完成一次性真实 MVP 端到端验收 -> Target Artifact: 生产 `run` 命令、T17 运行输出和预算事件 | Verification: 模型 1 次、GitHub GET 1 次；multiple Tool Calls 已返回但首个搜索响应超限；安全终止；无重试。
 - [x] T18: 完成搜索响应预算适配修复 -> Target Artifact: src/github_scout_agent/{github_api,tool_registry}.py、tests/test_github_tools.py | Verification: 默认搜索 `per_page=5`、模型参数上限 5；76 KiB 反例安全拒绝；小分页解析、候选容量、Agent Mock 闭环回归通过；104 tests passed。
-- [ ] T19: 重新申请一次性真实 MVP 运行授权 -> Target Artifact: 待授权 | Acceptance: 用户明确授权后再开始；当前不得重试 T17。
+- [x] T19: 完成一次性真实 MVP 运行 -> Target Artifact: 生产 `run` 输出与预算事件 | Verification: 模型 4 次、GitHub 8 次、候选 3 个；真实搜索与 README 证据部分完成；最终以 `github_requests` 安全终止；无重试。
+- [ ] T20: MVP 后续修复与重新授权评估 -> Target Artifact: 待授权 | Acceptance: 用户明确授权后再开始；当前不得重试 T19。
 
 ## 4. Ruled-Out Approaches and Side Items
-- Ruled Out: MVP 不采用 GitHub 写操作、私有仓库、Clone、第三方代码执行、任意 Shell、用户真实文件管理、复杂多 Provider 框架、非结构化伪工具调用、多 Agent、RAG、GraphQL 强制迁移和 Windows 桌面应用；T17 未完成最终业务闭环，原因是响应大小预算安全终止；未重试或修改 Gate A/B 记录 | Credentials: Gate A/B/T17 一次性记录、DeepSeek 官方文档/价格页、T18 MockTransport 反例与分页证据 | Revert Scope: None | Retained Net Assets: Gate A/B dry-run/失败记录、T16 生产 run 装配、T18 搜索分页保护、证据报告、预算与事件记录和离线测试。
+- Ruled Out: MVP 不采用 GitHub 写操作、私有仓库、Clone、第三方代码执行、任意 Shell、用户真实文件管理、复杂多 Provider 框架、非结构化伪工具调用、多 Agent、RAG、GraphQL 强制迁移和 Windows 桌面应用；T19 未完成最终业务闭环，原因是模型重复行动耗尽 GitHub 请求预算；未重试或修改 Gate A/B/T17 记录 | Credentials: Gate A/B/T17/T19 一次性记录、DeepSeek 官方文档/价格页、T18 分页和 T19 运行证据 | Revert Scope: None | Retained Net Assets: Gate A/B/T17 失败记录、T16 生产 run 装配、T18 搜索分页保护、T19 部分真实证据、预算与事件记录和离线测试。
 - P-01: MVP 完成后评估本地 Web UI、更多模型端点和历史报告/本地索引 | Reason for Deferral: 不影响当前 CLI Agent 闭环和安全验收 | Wake-up Timing: S5 MVP 验收后。
