@@ -36,6 +36,7 @@ PART_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 DEFAULT_README_CHARS = 12_000
 DEFAULT_MAX_RETRIES = 1
 DEFAULT_FALLBACK_RETRY_DELAY = 1.0
+MAX_SEARCH_PER_PAGE = 5
 
 
 class GithubApiError(RuntimeError):
@@ -348,11 +349,11 @@ class GitHubRestClient:
         sort: str = "best_match",
         order: str = "desc",
         page: int = 1,
-        per_page: int = 10,
+        per_page: int = MAX_SEARCH_PER_PAGE,
     ) -> SearchResult:
         if not query or len(query) > 256 or any(ord(char) < 32 for char in query):
             raise GithubApiError("invalid_query", "input", "query is empty, too long, or contains control characters")
-        if page < 1 or per_page < 1 or per_page > 100:
+        if page < 1 or per_page < 1 or per_page > MAX_SEARCH_PER_PAGE:
             raise GithubApiError("invalid_pagination", "input", "pagination values are outside the allowed range")
         if order not in {"asc", "desc"}:
             raise GithubApiError("invalid_order", "input", "order must be asc or desc")

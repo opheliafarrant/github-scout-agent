@@ -10,7 +10,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from .budget import BudgetExceeded
-from .github_api import GithubApiError, GitHubRestClient, validate_owner_repo_part
+from .github_api import GithubApiError, GitHubRestClient, MAX_SEARCH_PER_PAGE, validate_owner_repo_part
 from .github_models import ToolError, ToolResult
 
 
@@ -21,7 +21,7 @@ class SearchArguments(BaseModel):
     sort: Literal["best_match", "stars", "forks", "help-wanted-issues", "updated"] = "best_match"
     order: Literal["asc", "desc"] = "desc"
     page: int = Field(default=1, ge=1)
-    per_page: int = Field(default=10, ge=1, le=100)
+    per_page: int = Field(default=MAX_SEARCH_PER_PAGE, ge=1, le=MAX_SEARCH_PER_PAGE)
 
     @field_validator("query")
     @classmethod

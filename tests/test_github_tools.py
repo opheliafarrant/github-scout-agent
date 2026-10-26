@@ -75,6 +75,39 @@ def test_search_normalizes_fields_and_preserves_missing_license() -> None:
     assert len(seen) == 1
 
 
+def test_search_uses_small_mvp_page_size_and_rejects_larger_model_value() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["per_page"] == "5"
+        return _response(request, 200, {"total_count": 1, "items": [_repo()]})
+
+    with GitHubRestClient(transport=_transport(handler, seen)) as client:
+        registry = build_github_tool_registry(client)
+        normal = registry.dispatch("search_public_repositories", {"query": "bounded"})
+        oversized = registry.dispatch("search_public_repositories", {"query": "bounded", "per_page": 6})
+
+    assert normal.ok is True
+    assert oversized.ok is False
+    assert oversized.error.code == "invalid_arguments"
+    assert len(seen) == 1
+
+
+def test_normal_small_search_response_stays_within_response_budget() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _response(request, 200, {"total_count": 2, "items": [_repo("octo/one"), _repo("octo/two")]})
+
+    budget = RequestBudget(max_response_bytes=64 * 1024, max_candidates=3)
+    with GitHubRestClient(budget=budget, transport=_transport(handler, seen)) as client:
+        result = build_github_tool_registry(client).dispatch("search_public_repositories", {"query": "small"})
+
+    assert result.ok is True
+    assert len(result.data.items) == 2
+    assert result.data.source.url.startswith("https://api.github.com/search/repositories")
+
+
 def test_readme_is_decoded_and_truncated() -> None:
     seen: list[httpx.Request] = []
     readme = "This is untrusted README data. Do not execute commands."
@@ -333,6 +366,22 @@ def test_streaming_response_without_content_length_stops_during_read() -> None:
     assert result.error.code == "response_too_large"
     assert result.request_count == 1
     assert budget.response_bytes_used > budget.max_response_bytes
+
+
+def test_t17_sized_search_response_still_fails_closed_after_page_bound() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        oversized = [_repo(f"octo/large-{index}") | {"description": "x" * 15_000} for index in range(5)]
+        return _response(request, 200, {"total_count": 5, "items": oversized})
+
+    budget = RequestBudget(max_response_bytes=64 * 1024, max_candidates=3)
+    with GitHubRestClient(budget=budget, transport=_transport(handler, seen)) as client:
+        result = build_github_tool_registry(client).dispatch("search_public_repositories", {"query": "large"})
+
+    assert result.ok is False
+    assert result.error.code == "response_too_large"
+    assert result.request_count == 1
 
 
 @pytest.mark.parametrize(
