@@ -2,8 +2,8 @@
 
 ## 1. Task Foundation
 - True Goal: 建立可回退、可测试的 GitHub Scout Agent Python 工程基础和只读工具系统，并按阶段推进受限 Agent Loop 开发。
-- Current Stage: S5-02 Gate A 正式在线验收前置（安全阻断）
-- Active Mainline: T10-P2: 完成双确认一次性在线入口和费用/配置预检；当前因无法在本地安全注入 API Key，真实 Gate A 请求为 0。
+- Current Stage: S5-02 Gate A 正式在线验收（完成，失败）
+- Active Mainline: T11: 唯一一次 Gate A 真实请求已执行并完成解析；结果为多 Tool Calls，不重试；等待用户审阅，Gate B/C 未授权。
 
 ## 2. Frozen Baselines and Inline Evidence
 - F1 Fact Baseline:
@@ -33,6 +33,7 @@
   - F1-24: Gate A-P1 使用看似有效的本地 API Key 环境变量运行 dry-run，仍未发送真实请求；输出只记录 Authorization 是否存在，不输出 Key。
   - F1-25: 正式在线入口使用 `--online --confirm-live` 进行前置校验；Base URL/Model/Thinking/Strict/Max Tokens 目标配置可校验，但当前 `GITHUB_SCOUT_MODEL_API_KEY` 未配置，返回 `missing_api_key`、exit code 1，未创建一次性授权记录、未发送模型或 GitHub 请求。
   - F1-26: 本轮曾启动 Windows 隐藏输入提示；用户反馈无法交互后已取消进程；真实 DeepSeek 请求 0、真实 GitHub 请求 0、工作树干净。
+  - F1-27: Gate A 一次性授权记录显示真实模型请求 attempted=true、result_code=multiple_tool_calls、result_status=failed；估算费用 ¥0.004979；usage 未持久化，不能编造；真实 GitHub 请求 0、无重试。
 - F2 Decision Baseline:
   - F2-01 (D1): MVP 采用 CLI；本地 Web UI 后置；Windows 桌面应用不属于 MVP。
   - F2-02 (D2): 支持无 Token 和用户自配只读 Token；只读公开仓库；不支持私有仓库、账户管理和任何 GitHub 写操作；Token 不进入模型、报告、普通日志或版本控制。
@@ -53,7 +54,7 @@
   - F3-11: Gate A 受控在线入口提交：fabec37eff1a68d1af0a1f87474ba45bf2a51b6b (`feat: add controlled online gate a`)；仅完成前置阻断验证，未调用真实模型 API。
 
 ## 3. Current Engineering Flow and Impediments
-- Current Impediment / Stop Point: 缺少可安全注入的本地 `GITHUB_SCOUT_MODEL_API_KEY`；隐藏输入不可交互，Gate A 在请求前阻断；不得改用聊天粘贴或明文参数。
+- Current Impediment / Stop Point: Gate A 已消耗唯一请求并因模型返回多个 Tool Calls 未通过单调用验收；不得重试；Gate B/C 未授权。
 - [x] T01: 完成 S0 产品需求分析 -> Target Artifact: docs/GitHub-Scout-Agent-产品需求分析-V0.1.md | Verification: 文件已实际读取；V0.1 保留。
 - [x] T02: 完成 S1 产品需求冻结 -> Target Artifact: docs/GitHub-Scout-Agent-PRD-V0.2.md | Verification: 五项决策、MVP、Agent Loop、只读边界、F/S 验收和 S0-S6 路线已写入；文档一致性检查通过。
 - [x] T03: 完成 S2 技术架构设计 -> Target Artifact: docs/GitHub-Scout-Agent-技术架构设计-V0.1.md | Verification: 总体架构、Agent Loop、工具/API、数据、报告、安全、预算、错误、技术栈、测试和 S3-S5 依赖已写入；文档一致性检查通过；待用户验收。
@@ -68,7 +69,8 @@
 - [x] T10-P0: 完成 S5-02-P0 DeepSeek 接入预检 -> Target Artifact: src/github_scout_agent/{model_client,config}.py、tests/test_model_client.py、README.md | Verification: 官方协议、非思考、Beta strict、价格和候选模型已核验；offline 76 tests passed；真实模型请求 0。
 - [x] T10-P1: 完成 Gate A-P1 离线测试入口 -> Target Artifact: src/github_scout_agent/gate_a.py、tests/test_gate_a.py、CLI gate-a | Verification: 固定 DeepSeek 配置、单搜索 Tool Call、严格 zero GitHub requests、脱敏摘要和失败分类均已验证；95 tests passed。
 - [x] T10-P2: 完成 Gate A 受控在线入口与前置校验 -> Target Artifact: src/github_scout_agent/gate_a.py、src/github_scout_agent/cli.py、tests/test_gate_a.py | Verification: `--online --confirm-live` 无 Key 时安全阻断；无自动重试、无 GitHub 调用、无一次性授权记录写入。
-- [ ] T11: 完成 Gate A 唯一真实请求 -> Target Artifact: 待本地配置 API Key | Acceptance: 仅在 Key 配置、费用预检通过且用户仍授权时执行一次；当前未执行。
+- [x] T11: 完成 Gate A 唯一真实请求 -> Target Artifact: .scout/gate_a_online_authorization.json | Verification: attempted=true；唯一真实请求 1 次；结果 `multiple_tool_calls`；无重试；真实 GitHub 请求 0；Gate A 按单 Tool Call 标准失败。
+- [ ] T12: 进入 Gate B/C -> Target Artifact: 待授权 | Acceptance: 用户明确授权后再开始；当前不得执行。
 
 ## 4. Ruled-Out Approaches and Side Items
 - Ruled Out: MVP 不采用 GitHub 写操作、私有仓库、Clone、第三方代码执行、任意 Shell、用户真实文件管理、复杂多 Provider 框架、非结构化伪工具调用、多 Agent、RAG、GraphQL 强制迁移和 Windows 桌面应用；本轮在线前置因缺少 API Key 阻断，未发送真实模型或 GitHub 请求，未消耗一次性授权记录 | Credentials: 用户 Gate A 正式授权、DeepSeek 官方文档/价格页和本地 preflight 证据 | Revert Scope: None | Retained Net Assets: Gate A dry-run、受控在线入口、一次性授权机制、费用估算、预算与事件记录和离线测试。
