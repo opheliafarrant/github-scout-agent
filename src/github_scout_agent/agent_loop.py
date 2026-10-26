@@ -90,6 +90,7 @@ class AgentLoop:
                 "model_call_finished",
                 has_tool_calls=bool(response.tool_calls),
                 tool_call_count=len(response.tool_calls),
+                usage=response.usage.model_dump() if response.usage else {"status": "unknown"},
             )
 
             if response.content:
