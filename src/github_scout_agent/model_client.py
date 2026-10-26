@@ -11,6 +11,7 @@ import copy
 import json
 import math
 from collections.abc import Mapping
+from typing import Literal
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -61,13 +62,21 @@ class OpenAICompatibleClient:
         budget: RequestBudget | None = None,
         transport: httpx.BaseTransport | None = None,
         timeout: float = 10.0,
+        thinking_mode: Literal["disabled", "enabled"] | None = None,
+        strict_tools: bool = True,
+        max_tokens: int | None = None,
     ) -> None:
         if not model.strip():
             raise ModelAdapterError("model ID is required", code="invalid_model", category="configuration")
         if timeout <= 0:
             raise ModelAdapterError("model timeout must be positive", code="invalid_timeout", category="configuration")
+        if max_tokens is not None and max_tokens <= 0:
+            raise ModelAdapterError("max_tokens must be positive", code="invalid_max_tokens", category="configuration")
         self.endpoint = _validate_base_url(base_url)
         self.model = model
+        self.thinking_mode = thinking_mode
+        self.strict_tools = strict_tools
+        self.max_tokens = max_tokens
         self._api_key = api_key.get_secret_value() if isinstance(api_key, SecretStr) else api_key
         if not self._api_key:
             raise ModelAdapterError("model API Key is not configured", code="model_not_configured", category="configuration")
@@ -96,6 +105,9 @@ class OpenAICompatibleClient:
             budget=budget,
             transport=transport,
             timeout=timeout,
+            thinking_mode=config.thinking_mode,
+            strict_tools=config.strict_tools,
+            max_tokens=config.max_tokens,
         )
 
     def close(self) -> None:
@@ -111,6 +123,11 @@ class OpenAICompatibleClient:
         self.budget.check_task_time()
         try:
             safe_tools = copy.deepcopy(tools)
+            if not self.strict_tools:
+                for tool in safe_tools:
+                    function = tool.get("function") if isinstance(tool, Mapping) else None
+                    if isinstance(function, dict):
+                        function.pop("strict", None)
             payload = {
                 "model": self.model,
                 "messages": [self._message_to_wire(message) for message in messages],
@@ -118,6 +135,10 @@ class OpenAICompatibleClient:
                 "tool_choice": "auto",
                 "stream": False,
             }
+            if self.thinking_mode is not None:
+                payload["thinking"] = {"type": self.thinking_mode}
+            if self.max_tokens is not None:
+                payload["max_tokens"] = self.max_tokens
         except (TypeError, ValueError) as exc:
             raise ModelAdapterError("unable to construct model request", code="invalid_request", category="protocol") from exc
 

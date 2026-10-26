@@ -39,5 +39,8 @@ Configuration status reads these environment variables without printing their va
 - `GITHUB_SCOUT_MODEL`
 - `GITHUB_SCOUT_MODEL_API_KEY`
 - `GITHUB_TOKEN`
+- `GITHUB_SCOUT_MODEL_THINKING_MODE` (`disabled`/`enabled`)
+- `GITHUB_SCOUT_MODEL_STRICT_TOOLS` (`true`/`false`)
+- `GITHUB_SCOUT_MODEL_MAX_TOKENS`
 
 S3-01/S3-03 do not use these values to make real network requests. S4-01 live verification uses a bounded public-only budget; a configured `GITHUB_TOKEN` is optional and never printed.

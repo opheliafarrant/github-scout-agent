@@ -86,6 +86,36 @@ def test_request_uses_standard_chat_tool_calling_shape_and_preserves_usage() -> 
     assert response.usage.total_tokens == 14
 
 
+def test_deepseek_preflight_non_thinking_disables_thinking_and_avoids_beta_strict() -> None:
+    captured: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content))
+        return _response(request, {"choices": [{"message": {"role": "assistant", "content": "ok"}}]})
+
+    config = AppConfig(
+        model_base_url="https://api.deepseek.com",
+        model="deepseek-flash",
+        model_api_key=SecretStr(MODEL_KEY),
+        thinking_mode="disabled",
+        strict_tools=False,
+        max_tokens=512,
+    )
+    tools = [{"type": "function", "function": {"name": "demo", "strict": True, "parameters": {}}}]
+    client = OpenAICompatibleClient.from_config(config, transport=httpx.MockTransport(handler))
+    with client:
+        client.complete([AgentMessage(role="user", content="test")], tools)
+
+    payload = captured[0]
+    assert payload["model"] == "deepseek-flash"
+    assert payload["thinking"] == {"type": "disabled"}
+    assert payload["max_tokens"] == 512
+    assert "strict" not in payload["tools"][0]["function"]
+    assert "reasoning_content" not in payload["messages"][0]
+    assert payload["stream"] is False
+    assert payload["tool_choice"] == "auto"
+
+
 def test_multiple_tool_calls_and_followup_messages_are_preserved() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return _response(
