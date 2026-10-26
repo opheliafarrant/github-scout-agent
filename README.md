@@ -31,6 +31,8 @@ python -m venv .venv
 # Explicit S4-02 real GitHub + Mock LLM scenarios, one at a time.
 \.venv\Scripts\github-scout-agent.exe live-agent-demo --scenario search
 \.venv\Scripts\github-scout-agent.exe live-agent-demo --scenario repository
+# Offline-only DeepSeek Gate A protocol preflight.
+\.venv\Scripts\github-scout-agent.exe gate-a --dry-run
 ```
 
 Configuration status reads these environment variables without printing their values:

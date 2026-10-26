@@ -82,5 +82,25 @@ def live_agent_demo_command(
         raise typer.Exit(code=1)
 
 
+@app.command("gate-a")
+def gate_a_command(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Required: run only the offline MockTransport preflight."),
+    scenario: str = typer.Option("valid", "--scenario", help="Offline scenario for protocol/error testing."),
+) -> None:
+    """Run the offline-only DeepSeek Gate A protocol preflight."""
+
+    import json
+
+    if not dry_run:
+        typer.echo("Gate A online mode is disabled in this stage; pass --dry-run.", err=True)
+        raise typer.Exit(code=2)
+    from .gate_a import run_gate_a_dry_run
+
+    result = run_gate_a_dry_run(scenario)
+    typer.echo(json.dumps(result.model_dump(), ensure_ascii=False, sort_keys=True))
+    if result.status != "passed":
+        raise typer.Exit(code=1)
+
+
 if __name__ == "__main__":
     app()
