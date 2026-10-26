@@ -75,6 +75,76 @@ def test_search_normalizes_fields_and_preserves_missing_license() -> None:
     assert len(seen) == 1
 
 
+def test_repository_language_metadata_is_preserved_or_unknown() -> None:
+    cases = [("Python", "Python"), ("C++", "C++"), (None, None), ("__missing__", None)]
+    for language, expected in cases:
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request, language: str | None = language) -> httpx.Response:
+            payload = _repo()
+            if language == "__missing__":
+                payload.pop("language", None)
+            else:
+                payload["language"] = language
+            return _response(request, 200, {"total_count": 1, "items": [payload]})
+
+        with GitHubRestClient(transport=_transport(handler, seen)) as client:
+            result = build_github_tool_registry(client).dispatch(
+                "search_public_repositories", {"query": "language"}
+            )
+
+        record = result.data.items[0]
+        assert record.language == expected
+        assert ("language" in record.missing_fields) is (expected is None)
+
+
+def test_required_language_filters_known_mismatch_without_consuming_capacity() -> None:
+    seen: list[httpx.Request] = []
+    items = [
+        _repo("octo/python") | {"language": "Python"},
+        _repo("octo/cpp") | {"language": "C++"},
+        _repo("octo/unknown"),
+        _repo("octo/python-two") | {"language": "Python"},
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _response(request, 200, {"total_count": len(items), "items": items})
+
+    budget = RequestBudget(max_candidates=3)
+    with GitHubRestClient(
+        budget=budget,
+        required_language="Python",
+        transport=_transport(handler, seen),
+    ) as client:
+        result = build_github_tool_registry(client).dispatch(
+            "search_public_repositories", {"query": "python agent"}
+        )
+
+    assert result.ok is True
+    assert [item.full_name for item in result.data.items] == ["octo/python", "octo/python-two"]
+    assert [item.full_name for item in result.data.unverified_items] == ["octo/unknown"]
+    assert result.data.excluded_language_count == 1
+    assert result.data.required_language == "Python"
+    assert budget.candidates_used == 2
+
+
+def test_required_language_blocks_known_mismatch_on_repository_detail() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _response(request, 200, _repo("octo/cpp") | {"language": "C++"})
+
+    with GitHubRestClient(
+        required_language="Python",
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        result = build_github_tool_registry(client).dispatch(
+            "get_public_repository", {"owner": "octo", "repo": "cpp"}
+        )
+
+    assert result.ok is False
+    assert result.error.code == "language_mismatch"
+    assert result.request_count == 1
+
+
 def test_search_uses_small_mvp_page_size_and_rejects_larger_model_value() -> None:
     seen: list[httpx.Request] = []
 

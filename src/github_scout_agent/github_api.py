@@ -98,6 +98,36 @@ def _optional_int(value: object) -> int | None:
     return value if isinstance(value, int) and value >= 0 else None
 
 
+_LANGUAGE_ALIASES = {
+    "py": "Python",
+    "python": "Python",
+    "c++": "C++",
+    "cpp": "C++",
+    "cxx": "C++",
+    "javascript": "JavaScript",
+    "js": "JavaScript",
+    "typescript": "TypeScript",
+    "ts": "TypeScript",
+    "go": "Go",
+    "golang": "Go",
+    "rust": "Rust",
+    "java": "Java",
+    "c#": "C#",
+    "csharp": "C#",
+    "ruby": "Ruby",
+    "php": "PHP",
+    "swift": "Swift",
+    "kotlin": "Kotlin",
+}
+
+
+def normalize_language_name(value: str | None) -> str | None:
+    if not value:
+        return None
+    normalized = re.sub(r"\s+", " ", value.strip().casefold())
+    return _LANGUAGE_ALIASES.get(normalized, value.strip())
+
+
 def _normalize_repository(payload: Mapping[str, object], source_url: str, captured_at: datetime) -> RepositoryRecord:
     missing: list[str] = []
 
@@ -136,6 +166,11 @@ def _normalize_repository(payload: Mapping[str, object], source_url: str, captur
     if normalized_topics is None:
         missing.append("topics")
 
+    language_value = payload.get("language")
+    language = language_value.strip() if isinstance(language_value, str) and language_value.strip() else None
+    if language is None:
+        missing.append("language")
+
     fields = {
         "repository_id": payload.get("id") if isinstance(payload.get("id"), (int, str)) else None,
         "full_name": full_name,
@@ -150,6 +185,7 @@ def _normalize_repository(payload: Mapping[str, object], source_url: str, captur
         "created_at": payload.get("created_at"),
         "updated_at": payload.get("updated_at"),
         "pushed_at": payload.get("pushed_at"),
+        "language": language,
         "license": license_evidence,
         "topics": normalized_topics,
         "missing_fields": sorted(set(missing)),
@@ -177,6 +213,7 @@ class GitHubRestClient:
         max_retry_delay: float = 5.0,
         fallback_retry_delay: float = DEFAULT_FALLBACK_RETRY_DELAY,
         readme_max_chars: int = DEFAULT_README_CHARS,
+        required_language: str | None = None,
     ) -> None:
         if max_retries < 0:
             raise ValueError("max_retries cannot be negative")
@@ -192,6 +229,7 @@ class GitHubRestClient:
         self._max_retry_delay = max_retry_delay
         self._fallback_retry_delay = fallback_retry_delay
         self._readme_max_chars = readme_max_chars
+        self.required_language = normalize_language_name(required_language)
         self.request_log: list[dict[str, object]] = []
         headers = {
             "Accept": "application/vnd.github+json",
@@ -368,12 +406,26 @@ class GitHubRestClient:
             raise GithubApiError("invalid_search_payload", "schema", "GitHub search response is missing items")
         raw_items = [item for item in payload["items"] if isinstance(item, Mapping)]
         public_items: list[Mapping[str, object]] = []
+        unverified_items: list[Mapping[str, object]] = []
+        excluded_language_count = 0
+        public_item_count = 0
         seen_ids: set[str] = set()
         for item in raw_items:
             identity = self._candidate_identity(item)
             if self._is_public_repository(item) and identity and identity not in seen_ids:
                 seen_ids.add(identity)
-                public_items.append(item)
+                public_item_count += 1
+                if self.required_language:
+                    raw_language = item.get("language")
+                    language = normalize_language_name(raw_language) if isinstance(raw_language, str) else None
+                    if language is None:
+                        unverified_items.append(item)
+                    elif language.casefold() == self.required_language.casefold():
+                        public_items.append(item)
+                    else:
+                        excluded_language_count += 1
+                else:
+                    public_items.append(item)
         candidate_ids = [self._candidate_identity(item) for item in public_items]
         accepted_ids, truncated = self.budget.take_candidate_ids(
             [candidate_id for candidate_id in candidate_ids if candidate_id is not None]
@@ -384,6 +436,7 @@ class GitHubRestClient:
             for item in public_items
             if self._candidate_identity(item) in accepted_id_set
         ]
+        unverified_records = [_normalize_repository(item, source_url, captured_at) for item in unverified_items]
         return SearchResult(
             items=items,
             total_count=payload.get("total_count") if isinstance(payload.get("total_count"), int) else None,
@@ -394,7 +447,10 @@ class GitHubRestClient:
             page=page,
             per_page=per_page,
             candidate_budget_truncated=truncated,
-            excluded_non_public_count=len(raw_items) - len(public_items),
+            excluded_non_public_count=len(raw_items) - public_item_count,
+            excluded_language_count=excluded_language_count,
+            unverified_items=unverified_records,
+            required_language=self.required_language,
             source=_source(source_url, captured_at),
         )
 
@@ -415,7 +471,18 @@ class GitHubRestClient:
             raise GithubApiError("invalid_repository_payload", "schema", "GitHub repository response is not an object")
         if payload.get("private") is not False or payload.get("visibility") != "public":
             raise GithubApiError("private_repository_blocked", "safety", "private repositories are not supported")
-        return _normalize_repository(payload, source_url, captured_at)
+        record = _normalize_repository(payload, source_url, captured_at)
+        if (
+            self.required_language
+            and record.language
+            and record.language.casefold() != self.required_language.casefold()
+        ):
+            raise GithubApiError(
+                "language_mismatch",
+                "safety",
+                f"repository language does not satisfy required {self.required_language} constraint",
+            )
+        return record
 
     def get_public_readme(self, *, owner: str, repo: str, ref: str | None = None) -> ReadmeEvidence:
         owner = validate_owner_repo_part(owner, "owner")

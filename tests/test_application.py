@@ -5,7 +5,7 @@ import json
 import httpx
 from pydantic import SecretStr
 
-from github_scout_agent.application import render_mvp_report, run_research_task
+from github_scout_agent.application import infer_required_language, render_mvp_report, run_research_task
 from github_scout_agent.agent_loop import AgentRunResult
 from github_scout_agent.github_models import ToolError, ToolResult
 from github_scout_agent.budget import RequestBudget
@@ -145,3 +145,25 @@ def test_finalized_report_with_skipped_evidence_is_marked_partial() -> None:
 
     assert "Status: completed" in report
     assert "Completeness: partial" in report
+
+
+def test_report_uses_evidence_status_not_model_completion_alone() -> None:
+    result = AgentRunResult(
+        status="completed",
+        termination_reason="model_finalized",
+        final_text="The model says complete.",
+        evidence_complete=False,
+        evidence_gaps=["README not checked: octo/demo"],
+        budget={},
+    )
+
+    report = render_mvp_report("find Python tool calling repositories", result)
+
+    assert "Completeness: partial" in report
+    assert "README not checked: octo/demo" in report
+
+
+def test_task_language_inference_is_not_global() -> None:
+    assert infer_required_language("find small Python agent repositories") == "Python"
+    assert infer_required_language("find native C++ runtimes") == "C++"
+    assert infer_required_language("find small agent repositories") is None

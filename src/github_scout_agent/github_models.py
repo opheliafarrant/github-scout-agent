@@ -63,6 +63,7 @@ class RepositoryRecord(BaseModel):
     created_at: datetime | None = None
     updated_at: datetime | None = None
     pushed_at: datetime | None = None
+    language: str | None = None
     license: LicenseEvidence = Field(default_factory=LicenseEvidence)
     languages: dict[str, int] | None = None
     topics: list[str] | None = None
@@ -84,6 +85,9 @@ class SearchResult(BaseModel):
     per_page: int = Field(ge=1)
     candidate_budget_truncated: bool = False
     excluded_non_public_count: int = Field(default=0, ge=0)
+    excluded_language_count: int = Field(default=0, ge=0)
+    unverified_items: list[RepositoryRecord] = Field(default_factory=list)
+    required_language: str | None = None
     source: SourceRef
 
 

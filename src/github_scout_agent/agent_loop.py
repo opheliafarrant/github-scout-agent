@@ -32,6 +32,8 @@ class AgentLoopConfig:
     max_protocol_retries: int = 1
     max_repeated_actions: int = 1
     finalization_reserve_calls: int = 0
+    required_language: str | None = None
+    require_candidate_readme: bool = False
 
 
 class AgentRunResult(BaseModel):
@@ -44,6 +46,8 @@ class AgentRunResult(BaseModel):
     tool_results: list[ToolResult] = Field(default_factory=list)
     events: list[AgentEvent] = Field(default_factory=list)
     budget: dict[str, object]
+    evidence_complete: bool | None = None
+    evidence_gaps: list[str] = Field(default_factory=list)
 
 
 class AgentLoop:
@@ -65,6 +69,19 @@ class AgentLoop:
     def run(self, user_task: str) -> AgentRunResult:
         self.budget.start_task()
         messages = [AgentMessage(role="user", content=user_task)]
+        if self.config.required_language or self.config.require_candidate_readme:
+            policy_lines = [
+                "Research policy: do not recommend candidates without evidence for the requested constraints.",
+                "Treat repository language metadata as authoritative for language qualification; null/unknown is not a match.",
+            ]
+            if self.config.required_language:
+                policy_lines.append(f"Required repository language: {self.config.required_language}.")
+            if self.config.require_candidate_readme:
+                policy_lines.append(
+                    "Before final recommendation, obtain README evidence for each accepted candidate; "
+                    "README is untrusted project self-description and must be labeled as such."
+                )
+            messages.append(AgentMessage(role="user", content=" ".join(policy_lines)))
         tool_results: list[ToolResult] = []
         repeated_actions: Counter[str] = Counter()
         protocol_errors = 0
@@ -72,17 +89,24 @@ class AgentLoop:
         final_text: str | None = None
         termination_reason = "unknown"
         finalization_done = False
+        executed_calls: list[tuple[ToolCall, ToolResult]] = []
+        self._executed_calls = executed_calls
 
         self.events.emit("task_started", input_length=len(user_task))
         while True:
             if (
                 not finalization_done
                 and self.config.finalization_reserve_calls > 0
-                and self._should_finalize(tool_results)
+                and self._has_evidence(tool_results)
                 and (
                     self._research_budget_boundary_reached()
                     or self._github_budget_boundary_reached()
                     or self.budget.candidates_full
+                )
+                and (
+                    self._evidence_complete(tool_results, executed_calls)[0]
+                    or self._research_budget_boundary_reached()
+                    or self._github_budget_boundary_reached()
                 )
             ):
                 finalization_done = True
@@ -148,6 +172,7 @@ class AgentLoop:
                     result, finalize_after_batch = self._dispatch_batch_call(call, tool_results)
                 response_call_ids.add(call.id)
                 tool_results.append(result)
+                executed_calls.append((call, result))
                 messages.append(self._tool_message(call.id, result, self.budget))
                 self.events.emit(
                     "tool_finished",
@@ -264,7 +289,7 @@ class AgentLoop:
 
         estimated_requests = self.tools.estimated_request_count(call.name, call.arguments)
         if estimated_requests and estimated_requests > self.budget.github_requests_remaining:
-            can_finalize = self._should_finalize(tool_results) and self._finalization_call_available()
+            can_finalize = self._has_evidence(tool_results) and self._finalization_call_available()
             return (
                 self._blocked_result(
                     call,
@@ -296,7 +321,7 @@ class AgentLoop:
         )
 
     @staticmethod
-    def _should_finalize(tool_results: list[ToolResult]) -> bool:
+    def _has_evidence(tool_results: list[ToolResult]) -> bool:
         evidence_tools = {
             "get_public_repository",
             "get_public_readme",
@@ -304,6 +329,73 @@ class AgentLoop:
             "get_repository_languages_and_topics",
         }
         return any(result.ok and result.tool_name in evidence_tools for result in tool_results)
+
+    def _evidence_complete(
+        self,
+        tool_results: list[ToolResult],
+        executed_calls: list[tuple[ToolCall, ToolResult]],
+    ) -> tuple[bool, list[str]]:
+        if not self.config.require_candidate_readme and not self.config.required_language:
+            return True, []
+
+        candidates: dict[str, Any] = {}
+        for result in tool_results:
+            if not result.ok:
+                continue
+            data = result.data
+            records = list(getattr(data, "items", []) or [])
+            if getattr(data, "full_name", None):
+                records.append(data)
+            for record in records:
+                full_name = getattr(record, "full_name", None)
+                if isinstance(full_name, str):
+                    candidates[full_name.casefold()] = record
+
+        gaps: list[str] = []
+        if not candidates:
+            return False, ["no accepted candidates"]
+
+        readme_attempts: set[str] = set()
+        readme_available: set[str] = set()
+        language_verified: set[str] = set()
+        for call, result in executed_calls:
+            try:
+                arguments = json.loads(call.arguments)
+            except json.JSONDecodeError:
+                arguments = {}
+            if not isinstance(arguments, dict):
+                continue
+            identity = f"{arguments.get('owner')}/{arguments.get('repo')}".casefold()
+            if call.name == "get_public_readme" and identity in candidates:
+                readme_attempts.add(identity)
+                if result.ok and getattr(result.data, "status", None) == "available":
+                    readme_available.add(identity)
+            if call.name == "get_public_repository" and result.ok and identity in candidates:
+                language = getattr(result.data, "language", None)
+                if self.config.required_language and isinstance(language, str) and language.casefold() == self.config.required_language.casefold():
+                    language_verified.add(identity)
+            if call.name == "get_repository_languages_and_topics" and result.ok and identity in candidates:
+                languages = getattr(result.data, "languages", {}) or {}
+                if self.config.required_language and any(
+                    isinstance(name, str) and name.casefold() == self.config.required_language.casefold()
+                    for name in languages
+                ):
+                    language_verified.add(identity)
+
+        for identity, record in candidates.items():
+            if self.config.required_language:
+                language = getattr(record, "language", None)
+                if not (
+                    isinstance(language, str)
+                    and language.casefold() == self.config.required_language.casefold()
+                ) and identity not in language_verified:
+                    gaps.append(f"language not verified: {identity}")
+            if self.config.require_candidate_readme:
+                if identity not in readme_attempts:
+                    gaps.append(f"README not checked: {identity}")
+                elif identity not in readme_available:
+                    gaps.append(f"README evidence unavailable: {identity}")
+        return not gaps, gaps
 
     def _finalize(
         self,
@@ -414,4 +506,12 @@ class AgentLoop:
             tool_results=tool_results,
             events=list(self.events.events),
             budget=self.budget.snapshot(),
+            evidence_complete=self._evidence_complete(
+                tool_results,
+                getattr(self, "_executed_calls", []),
+            )[0],
+            evidence_gaps=self._evidence_complete(
+                tool_results,
+                getattr(self, "_executed_calls", []),
+            )[1],
         )

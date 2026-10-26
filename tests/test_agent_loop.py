@@ -351,6 +351,111 @@ def test_t24_normal_research_path_does_not_force_finalization() -> None:
     assert mock.tool_choices == ["auto", "auto"]
 
 
+def _t29_python_evidence_handler(request: httpx.Request) -> httpx.Response:
+    if request.url.path == "/search/repositories":
+        return httpx.Response(
+            200,
+            json={
+                "total_count": 4,
+                "items": [
+                    _repo() | {
+                        "full_name": f"octo/python-{index}",
+                        "html_url": f"https://github.com/octo/python-{index}",
+                        "language": "Python",
+                    }
+                    for index in range(3)
+                ]
+                + [_repo() | {"full_name": "octo/cpp", "html_url": "https://github.com/octo/cpp", "language": "C++"}],
+            },
+            request=request,
+        )
+    if request.url.path.endswith("/readme"):
+        content = "Native tool calling README evidence."
+        return httpx.Response(
+            200,
+            json={"encoding": "base64", "content": base64.b64encode(content.encode()).decode(), "size": len(content)},
+            request=request,
+        )
+    return httpx.Response(404, json={"message": "Not Found"}, request=request)
+
+
+def test_t29_required_evidence_reaches_finalization_only_after_all_readmes() -> None:
+    readme_calls = [
+        ToolCall(
+            id=f"readme-{index}",
+            name="get_public_readme",
+            arguments=json.dumps({"owner": "octo", "repo": f"python-{index}"}),
+        )
+        for index in range(3)
+    ]
+    mock = ScriptedMockLLM([
+        AssistantResponse(tool_calls=[
+            ToolCall(id="search", name="search_public_repositories", arguments=json.dumps({"query": "python agent native tool calling"}))
+        ]),
+        AssistantResponse(tool_calls=readme_calls),
+        AssistantResponse(content="Three Python candidates have README-backed tool-calling evidence."),
+    ])
+    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=20_000)
+    with GitHubRestClient(
+        budget=budget,
+        required_language="Python",
+        transport=httpx.MockTransport(_t29_python_evidence_handler),
+    ) as client:
+        result = AgentLoop(
+            model=mock,
+            tools=build_github_tool_registry(client),
+            budget=budget,
+            config=AgentLoopConfig(
+                finalization_reserve_calls=1,
+                required_language="Python",
+                require_candidate_readme=True,
+            ),
+        ).run("find small Python agent repositories with native tool calling")
+
+    assert result.status == "completed"
+    assert result.termination_reason == "model_finalized"
+    assert result.evidence_complete is True
+    assert result.evidence_gaps == []
+    assert mock.tool_choices == ["auto", "auto", "none"]
+    assert budget.github_requests_used == 4
+
+
+def test_t29_missing_candidate_readme_forces_partial_evidence_status() -> None:
+    mock = ScriptedMockLLM([
+        AssistantResponse(tool_calls=[
+            ToolCall(id="search", name="search_public_repositories", arguments=json.dumps({"query": "python agent native tool calling"}))
+        ]),
+        AssistantResponse(tool_calls=[
+            ToolCall(id="readme-0", name="get_public_readme", arguments=json.dumps({"owner": "octo", "repo": "python-0"}))
+        ]),
+        AssistantResponse(content="Partial comparison; two README checks remain unknown."),
+    ])
+    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=20_000)
+    with GitHubRestClient(
+        budget=budget,
+        required_language="Python",
+        transport=httpx.MockTransport(_t29_python_evidence_handler),
+    ) as client:
+        result = AgentLoop(
+            model=mock,
+            tools=build_github_tool_registry(client),
+            budget=budget,
+            config=AgentLoopConfig(
+                finalization_reserve_calls=1,
+                required_language="Python",
+                require_candidate_readme=True,
+            ),
+        ).run("find small Python agent repositories with native tool calling")
+
+    assert result.status == "completed"
+    assert result.termination_reason == "model_completed"
+    assert result.evidence_complete is False
+    assert "README not checked: octo/python-1" in result.evidence_gaps
+    assert "README not checked: octo/python-2" in result.evidence_gaps
+    assert mock.tool_choices == ["auto", "auto", "auto"]
+    assert budget.github_requests_used == 2
+
+
 def test_full_candidate_capacity_blocks_new_search_but_allows_accepted_followup() -> None:
     responses = [
         AssistantResponse(tool_calls=[ToolCall(id="search-1", name="search_public_repositories", arguments=json.dumps({"query": "first"}))]),
