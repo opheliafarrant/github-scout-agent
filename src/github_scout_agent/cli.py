@@ -85,8 +85,14 @@ def run_command(
         ))
         if result.status != "completed":
             raise typer.Exit(code=1)
-    except (ModelAdapterError, ValidationError, ValueError) as exc:
-        typer.echo(f"Model error: {getattr(exc, 'code', 'invalid_configuration')}; no retry was attempted.", err=True)
+    except ModelAdapterError as exc:
+        typer.echo(f"Model error: {exc.code}; no retry was attempted.", err=True)
+        raise typer.Exit(code=1) from exc
+    except ValidationError:
+        typer.echo("Model error: validation_error; no retry was attempted.", err=True)
+        raise typer.Exit(code=1)
+    except ValueError as exc:
+        typer.echo("Model error: value_error; no retry was attempted.", err=True)
         raise typer.Exit(code=1) from exc
 
 
