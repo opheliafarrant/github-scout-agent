@@ -2,8 +2,8 @@
 
 ## 1. Task Foundation
 - True Goal: 建立可回退、可测试的 GitHub Scout Agent Python 工程基础和只读工具系统，并按阶段推进受限 Agent Loop 开发。
-- Current Stage: T22-P0 Agent Finalization 收尾机制修复（完成）
-- Active Mainline: T22: 在证据充分且研究预算接近边界时切换 Finalization，禁止新增工具并生成完整/部分报告；T21 历史记录保留，不重试。
+- Current Stage: T23 最终真实 MVP 端到端验收（完成，部分失败）
+- Active Mainline: T23: 唯一真实 MVP 命令已执行；真实候选和证据部分取得，GitHub 预算终止，未重试。
 
 ## 2. Frozen Baselines and Inline Evidence
 - F1 Fact Baseline:
@@ -46,6 +46,7 @@
   - F1-37: T20-P0 离线验证：候选容量满额后新搜索不进入网络层；已接受候选 README 补查仍允许；预算快照进入下一轮 tool message；重复容量阻断后安全终止；partial report 明确标记；默认 pytest 实际结果为 108 passed、1 deselected。
   - F1-38: T21 唯一真实运行：模型请求 3 次、GitHub GET 8 次、候选 3 个；真实搜索返回 IBM/mcp-context-forge、vstorm-co/pydantic-deepagents、schmitech/orbit；README/许可证/Languages/Topics 部分补查完成；GitHub 预算耗尽，输出 `Completeness: partial`，usage/cost unknown，无重试。
   - F1-39: T22-P0 离线验证：证据充分后预留最后模型轮次；Finalization 使用 `tool_choice=none`；T21-like 重复搜索轨迹不再耗尽 GitHub 请求；Finalization Tool Call 被安全拒绝；默认 pytest 实际结果为 112 passed、1 deselected。
+  - F1-40: T23 唯一真实运行：模型请求 2 次、GitHub GET 8 次、候选 3 个；真实搜索、详情、README、Languages/Topics 部分补查完成；Finalization 未启动，GitHub 预算以 `github_requests` 终止；usage/cost unknown，无重试。
 - F2 Decision Baseline:
   - F2-01 (D1): MVP 采用 CLI；本地 Web UI 后置；Windows 桌面应用不属于 MVP。
   - F2-02 (D2): 支持无 Token 和用户自配只读 Token；只读公开仓库；不支持私有仓库、账户管理和任何 GitHub 写操作；Token 不进入模型、报告、普通日志或版本控制。
@@ -77,7 +78,7 @@
   - F3-18: T22-P0 修复提交：5cdfd9fcd55cc37ecbe53697d7988f24ad7341df (`fix: finalize agent after sufficient evidence`)；未调用真实模型或 GitHub API。
 
 ## 3. Current Engineering Flow and Impediments
-- Current Impediment / Stop Point: T21 历史运行未在预算内形成最终模型结论；T22 已完成离线收尾修复；下一次真实运行需新授权。
+- Current Impediment / Stop Point: T23 在当前 Tool Call 集合中达到 GitHub 预算，Finalization 未能启动；不得重试，后续修改需新授权。
 - [x] T01: 完成 S0 产品需求分析 -> Target Artifact: docs/GitHub-Scout-Agent-产品需求分析-V0.1.md | Verification: 文件已实际读取；V0.1 保留。
 - [x] T02: 完成 S1 产品需求冻结 -> Target Artifact: docs/GitHub-Scout-Agent-PRD-V0.2.md | Verification: 五项决策、MVP、Agent Loop、只读边界、F/S 验收和 S0-S6 路线已写入；文档一致性检查通过。
 - [x] T03: 完成 S2 技术架构设计 -> Target Artifact: docs/GitHub-Scout-Agent-技术架构设计-V0.1.md | Verification: 总体架构、Agent Loop、工具/API、数据、报告、安全、预算、错误、技术栈、测试和 S3-S5 依赖已写入；文档一致性检查通过；待用户验收。
@@ -104,8 +105,9 @@
 - [x] T20: 完成 Agent 收敛与预算终止修复 -> Target Artifact: src/github_scout_agent/{agent_loop,application}.py、tests/test_agent_loop.py、tests/test_application.py | Verification: 候选满额搜索阻断、已接受候选补查、重复阻断、预算快照和 partial report 均通过；108 tests passed。
 - [x] T21: 完成一次性真实 MVP 运行 -> Target Artifact: 生产 `run` 输出与预算事件 | Verification: 模型 3 次、GitHub 8 次、候选 3 个；真实候选和多类证据已取得；最终以 `github_requests` 安全终止；输出 partial report；无重试。
 - [x] T22-P0: 完成 Agent Finalization 收尾机制修复 -> Target Artifact: src/github_scout_agent/{agent_loop,model_client,application}.py、tests/test_agent_loop.py、tests/test_model_client.py、tests/test_application.py | Verification: 证据充分后预留最后模型轮次；`tool_choice=none`；新 Tool Calls 不执行；partial/complete 语义和 T21-like 轨迹均通过；112 tests passed。
-- [ ] T23: 重新申请一次性真实 MVP 运行授权 -> Target Artifact: 待授权 | Acceptance: 用户明确授权后再开始；当前不得重试 T21。
+- [x] T23: 完成一次性真实 MVP 运行 -> Target Artifact: 生产 `run` 输出与预算事件 | Verification: 模型 2 次、GitHub 8 次、候选 3 个；真实候选与多类证据部分取得；Finalization 未启动；以 `github_requests` 安全终止；无重试。
+- [ ] T24: MVP 后续收敛与重新授权评估 -> Target Artifact: 待授权 | Acceptance: 用户明确授权后再开始；当前不得重试 T23。
 
 ## 4. Ruled-Out Approaches and Side Items
-- Ruled Out: MVP 不采用 GitHub 写操作、私有仓库、Clone、第三方代码执行、任意 Shell、用户真实文件管理、复杂多 Provider 框架、非结构化伪工具调用、多 Agent、RAG、GraphQL 强制迁移和 Windows 桌面应用；T21 未完成完整业务闭环，T22 已完成离线收尾修复，未重试或修改 Gate A/B/T17/T19/T21 记录 | Credentials: Gate A/B/T17/T19/T21 一次性记录、DeepSeek 官方文档/价格页、T20/T22 Mock 反例证据 | Revert Scope: None | Retained Net Assets: Gate A/B/T17/T19/T21 记录、T16 生产 run 装配、T18 分页保护、T20 Agent 收敛、T22 Finalization、partial/complete report、预算与事件记录和离线测试。
+- Ruled Out: MVP 不采用 GitHub 写操作、私有仓库、Clone、第三方代码执行、任意 Shell、用户真实文件管理、复杂多 Provider 框架、非结构化伪工具调用、多 Agent、RAG、GraphQL 强制迁移和 Windows 桌面应用；T23 未完成完整业务闭环，原因是当前 Tool Call 集合内 GitHub 预算耗尽，未重试或修改 Gate A/B/T17/T19/T21 记录 | Credentials: Gate A/B/T17/T19/T21/T23 一次性记录、DeepSeek 官方文档/价格页、T20/T22 离线和 T23 真实运行证据 | Revert Scope: None | Retained Net Assets: Gate A/B/T17/T19/T21/T23 记录、T16 生产 run 装配、T18 分页保护、T20 Agent 收敛、T22 Finalization、T23 真实候选/证据和 partial report。
 - P-01: MVP 完成后评估本地 Web UI、更多模型端点和历史报告/本地索引 | Reason for Deferral: 不影响当前 CLI Agent 闭环和安全验收 | Wake-up Timing: S5 MVP 验收后。
