@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import httpx
+import pytest
+from pydantic import BaseModel, ConfigDict
 
 from github_scout_agent.github_api import GitHubRestClient
-from github_scout_agent.tool_registry import build_github_tool_registry
+from github_scout_agent.tool_registry import ToolDefinition, ToolRegistry, build_github_tool_registry
 
 
 EXPECTED_TOOLS = {
@@ -65,6 +67,26 @@ def test_unknown_tool_invalid_json_and_invalid_arguments_never_reach_transport()
     assert invalid_json.error.code == "invalid_json_arguments"
     assert invalid_args.error.code == "invalid_arguments"
     assert requests == []
+
+
+def test_internal_value_error_is_not_reclassified_as_github_response_error() -> None:
+    class EmptyArguments(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+    def internal_failure(arguments: BaseModel) -> object:
+        del arguments
+        raise ValueError("internal programming failure")
+
+    registry = ToolRegistry()
+    registry.register(ToolDefinition(
+        name="internal_failure",
+        description="test",
+        arguments_model=EmptyArguments,
+        handler=internal_failure,
+    ))
+
+    with pytest.raises(ValueError, match="internal programming failure"):
+        registry.dispatch("internal_failure", {})
 
 
 def test_request_budget_cannot_be_overridden_by_tool_arguments() -> None:

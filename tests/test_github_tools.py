@@ -98,6 +98,28 @@ def test_repository_language_metadata_is_preserved_or_unknown() -> None:
         assert ("language" in record.missing_fields) is (expected is None)
 
 
+def test_invalid_github_repository_field_becomes_controlled_schema_error() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = _repo() | {"language": "Python", "created_at": "not-a-date"}
+        return _response(request, 200, {"total_count": 1, "items": [payload]})
+
+    budget = RequestBudget(max_candidates=3)
+    with GitHubRestClient(budget=budget, transport=_transport(handler, seen)) as client:
+        result = build_github_tool_registry(client).dispatch(
+            "search_public_repositories", {"query": "invalid-date"}
+        )
+
+    assert result.ok is False
+    assert result.error.code == "invalid_github_response"
+    assert result.error.category == "schema"
+    assert result.request_count == 1
+    assert budget.github_requests_used == 1
+    assert "not-a-date" not in result.error.message
+    assert len(seen) == 1
+
+
 def test_required_language_filters_known_mismatch_without_consuming_capacity() -> None:
     seen: list[httpx.Request] = []
     items = [

@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 import httpx
+from pydantic import ValidationError
 
 from .budget import BudgetExceeded, RequestBudget
 from .github_models import (
@@ -194,7 +195,14 @@ def _normalize_repository(payload: Mapping[str, object], source_url: str, captur
     for name in ("stargazers_count", "forks_count", "created_at", "updated_at", "pushed_at"):
         if fields[name] is None and name not in fields["missing_fields"]:
             fields["missing_fields"].append(name)
-    return RepositoryRecord(**fields)
+    try:
+        return RepositoryRecord(**fields)
+    except ValidationError as exc:
+        raise GithubApiError(
+            "invalid_github_response",
+            "schema",
+            "GitHub response data failed local validation",
+        ) from exc
 
 
 class GitHubRestClient:

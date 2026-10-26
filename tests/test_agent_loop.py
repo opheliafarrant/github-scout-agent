@@ -629,6 +629,40 @@ def test_multiple_tool_calls_keep_ids_and_results_in_order() -> None:
     assert len(requests) == 2
 
 
+def test_invalid_github_response_in_batch_is_tool_feedback_not_loop_crash() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/search/repositories":
+            return httpx.Response(
+                200,
+                json={"total_count": 1, "items": [_repo() | {"created_at": "not-a-date"}]},
+                request=request,
+            )
+        return httpx.Response(200, json=_repo(), request=request)
+
+    response = AssistantResponse(tool_calls=[
+        ToolCall(id="bad-search", name="search_public_repositories", arguments=json.dumps({"query": "bad"})),
+        ToolCall(id="good-repo", name="get_public_repository", arguments=json.dumps({"owner": "octo", "repo": "demo-agent"})),
+    ])
+    budget = RequestBudget(max_github_requests=3, max_model_calls=2, max_feedback_bytes=20_000)
+    with _client(handler, budget) as client:
+        result = AgentLoop(
+            model=ScriptedMockLLM([response, AssistantResponse(content="partial evidence")]),
+            tools=build_github_tool_registry(client),
+            budget=budget,
+        ).run("inspect")
+
+    assert result.status == "completed"
+    assert [item.error.code if item.error else None for item in result.tool_results] == [
+        "invalid_github_response",
+        None,
+    ]
+    assert [message.tool_call_id for message in result.messages if message.role == "tool"] == [
+        "bad-search",
+        "good-repo",
+    ]
+    assert budget.github_requests_used == 2
+
+
 def test_duplicate_tool_call_id_is_blocked_without_second_execution() -> None:
     requests: list[httpx.Request] = []
 
