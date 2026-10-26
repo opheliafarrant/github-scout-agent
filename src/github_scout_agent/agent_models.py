@@ -15,6 +15,14 @@ class ToolCall(BaseModel):
     arguments: str
 
 
+class ModelUsage(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+
+
 class AgentMessage(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -30,6 +38,7 @@ class AssistantResponse(BaseModel):
     content: str | None = None
     tool_calls: list[ToolCall] = Field(default_factory=list)
     finish_reason: str | None = None
+    usage: ModelUsage | None = None
 
     @model_validator(mode="after")
     def require_content_or_tool_call(self) -> "AssistantResponse":
@@ -47,6 +56,21 @@ class AssistantResponse(BaseModel):
 
 class ModelCallError(RuntimeError):
     """Safe model boundary error used by real and mock adapters."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "model_call_error",
+        category: str = "model",
+        status_code: int | None = None,
+        retryable: bool = False,
+    ) -> None:
+        self.code = code
+        self.category = category
+        self.status_code = status_code
+        self.retryable = retryable
+        super().__init__(message)
 
 
 class ModelProtocolError(RuntimeError):

@@ -31,8 +31,13 @@ class AppConfig(BaseModel):
         if value is None:
             return None
         parsed = urlparse(value)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ValueError("model_base_url must be an absolute http(s) URL")
+        hostname = (parsed.hostname or "").lower()
+        local_http_hosts = {"localhost", "127.0.0.1", "::1"}
+        local_http = parsed.scheme == "http" and hostname in local_http_hosts
+        if (parsed.scheme != "https" and not local_http) or not parsed.netloc:
+            raise ValueError("model_base_url must be HTTPS; HTTP is allowed only for localhost development")
+        if parsed.username or parsed.password or parsed.query or parsed.fragment or ".." in parsed.path:
+            raise ValueError("model_base_url must not contain credentials, query, fragment, or traversal")
         return value.rstrip("/")
 
     @property

@@ -10,6 +10,7 @@ The current foundation provides:
 - an HTTPX-based, fixed-host GitHub REST client with injectable MockTransport;
 - deterministic request, response-size, and candidate budgets;
 - a synchronous, injectable Mock-LLM Agent Loop with redacted execution events;
+- a narrow, offline-tested OpenAI-compatible Chat Completions Tool Calling adapter;
 - an offline `mock-demo` CLI command showing feedback-driven query rewriting;
 - offline tests for import, version, help, configuration, tools, errors, and security boundaries.
 

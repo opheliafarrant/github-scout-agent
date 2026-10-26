@@ -27,6 +27,7 @@ class RequestBudget:
     max_model_calls: int | None = None
     max_task_seconds: float | None = None
     max_feedback_bytes: int | None = None
+    max_model_response_bytes: int | None = 64 * 1024
     clock: Callable[[], float] = time.monotonic
     github_requests_used: int = 0
     response_bytes_used: int = 0
@@ -34,6 +35,7 @@ class RequestBudget:
     accepted_candidate_ids: set[str] = field(default_factory=set)
     model_calls_used: int = 0
     feedback_bytes_used: int = 0
+    model_response_bytes_used: int = 0
     task_started_at: float | None = None
     _dimensions_exhausted: set[str] = field(default_factory=set)
 
@@ -69,6 +71,14 @@ class RequestBudget:
         if self.max_feedback_bytes is not None and size > self.max_feedback_bytes:
             self._dimensions_exhausted.add("feedback_bytes")
             raise BudgetExceeded("feedback_bytes", self.max_feedback_bytes, size)
+
+    def record_model_response_chunk(self, size: int, response_size_so_far: int) -> None:
+        if size < 0 or response_size_so_far < 0:
+            raise ValueError("model response size cannot be negative")
+        self.model_response_bytes_used += size
+        if self.max_model_response_bytes is not None and response_size_so_far > self.max_model_response_bytes:
+            self._dimensions_exhausted.add("model_response_bytes")
+            raise BudgetExceeded("model_response_bytes", self.max_model_response_bytes, response_size_so_far)
 
     def reserve_github_request(self) -> None:
         self.start_task()
@@ -143,6 +153,7 @@ class RequestBudget:
             "accepted_candidate_count": len(self.accepted_candidate_ids),
             "model_calls_used": self.model_calls_used,
             "feedback_bytes_used": self.feedback_bytes_used,
+            "model_response_bytes_used": self.model_response_bytes_used,
             "elapsed_seconds": self.elapsed_seconds(),
             "max_github_requests": self.max_github_requests,
             "max_response_bytes": self.max_response_bytes,
@@ -150,6 +161,7 @@ class RequestBudget:
             "max_model_calls": self.max_model_calls,
             "max_task_seconds": self.max_task_seconds,
             "max_feedback_bytes": self.max_feedback_bytes,
+            "max_model_response_bytes": self.max_model_response_bytes,
             "exhausted_dimensions": self.exhausted_dimensions,
             "fatal_exhausted_dimensions": self.fatal_exhausted_dimensions,
         }

@@ -77,8 +77,14 @@ class AgentLoop:
             try:
                 response = self.model.complete(messages=list(messages), tools=self.tools.schemas())
             except (ModelCallError, ModelProtocolError) as exc:
-                termination_reason = "model_call_error"
-                self.events.emit("task_terminated", reason=termination_reason, error=str(exc))
+                termination_reason = exc.code if isinstance(exc, ModelCallError) else "model_call_error"
+                self.events.emit(
+                    "task_terminated",
+                    reason=termination_reason,
+                    error_code=getattr(exc, "code", "model_call_error"),
+                    error_category=getattr(exc, "category", "protocol"),
+                    error=str(exc),
+                )
                 return self._result("terminated", termination_reason, final_text, messages, tool_results)
             self.events.emit(
                 "model_call_finished",
