@@ -85,18 +85,34 @@ def live_agent_demo_command(
 @app.command("gate-a")
 def gate_a_command(
     dry_run: bool = typer.Option(False, "--dry-run", help="Required: run only the offline MockTransport preflight."),
+    online: bool = typer.Option(False, "--online", help="Explicitly enable the single authorized live attempt."),
+    confirm_live: bool = typer.Option(False, "--confirm-live", help="Required confirmation for the live attempt."),
     scenario: str = typer.Option("valid", "--scenario", help="Offline scenario for protocol/error testing."),
 ) -> None:
     """Run the offline-only DeepSeek Gate A protocol preflight."""
 
     import json
 
-    if not dry_run:
-        typer.echo("Gate A online mode is disabled in this stage; pass --dry-run.", err=True)
+    if dry_run and online:
+        typer.echo("--dry-run and --online cannot be combined.", err=True)
         raise typer.Exit(code=2)
-    from .gate_a import run_gate_a_dry_run
+    if online:
+        if not confirm_live:
+            typer.echo("Online Gate A requires --confirm-live.", err=True)
+            raise typer.Exit(code=2)
+        if scenario != "valid":
+            typer.echo("Online Gate A does not accept offline scenarios.", err=True)
+            raise typer.Exit(code=2)
+        from .gate_a import run_gate_a_online
 
-    result = run_gate_a_dry_run(scenario)
+        result = run_gate_a_online()
+    else:
+        if not dry_run:
+            typer.echo("Gate A online mode is disabled; pass --dry-run for offline execution.", err=True)
+            raise typer.Exit(code=2)
+        from .gate_a import run_gate_a_dry_run
+
+        result = run_gate_a_dry_run(scenario)
     typer.echo(json.dumps(result.model_dump(), ensure_ascii=False, sort_keys=True))
     if result.status != "passed":
         raise typer.Exit(code=1)

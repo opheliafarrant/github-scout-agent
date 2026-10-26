@@ -33,6 +33,8 @@ python -m venv .venv
 \.venv\Scripts\github-scout-agent.exe live-agent-demo --scenario repository
 # Offline-only DeepSeek Gate A protocol preflight.
 \.venv\Scripts\github-scout-agent.exe gate-a --dry-run
+# Online Gate A requires both flags and a local key; do not run without explicit authorization.
+\.venv\Scripts\github-scout-agent.exe gate-a --online --confirm-live
 ```
 
 Configuration status reads these environment variables without printing their values:

@@ -122,23 +122,7 @@ class OpenAICompatibleClient:
     def complete(self, messages: list[AgentMessage], tools: list[dict[str, object]]) -> AssistantResponse:
         self.budget.check_task_time()
         try:
-            safe_tools = copy.deepcopy(tools)
-            if not self.strict_tools:
-                for tool in safe_tools:
-                    function = tool.get("function") if isinstance(tool, Mapping) else None
-                    if isinstance(function, dict):
-                        function.pop("strict", None)
-            payload = {
-                "model": self.model,
-                "messages": [self._message_to_wire(message) for message in messages],
-                "tools": safe_tools,
-                "tool_choice": "auto",
-                "stream": False,
-            }
-            if self.thinking_mode is not None:
-                payload["thinking"] = {"type": self.thinking_mode}
-            if self.max_tokens is not None:
-                payload["max_tokens"] = self.max_tokens
+            payload = self.build_payload(messages, tools)
         except (TypeError, ValueError) as exc:
             raise ModelAdapterError("unable to construct model request", code="invalid_request", category="protocol") from exc
 
@@ -182,6 +166,28 @@ class OpenAICompatibleClient:
         if status_code < 200 or status_code >= 300:
             raise self._http_error(status_code, content)
         return self._parse_response(content)
+
+    def build_payload(self, messages: list[AgentMessage], tools: list[dict[str, object]]) -> dict[str, object]:
+        """Build the exact non-network request body for preflight and tests."""
+
+        safe_tools = copy.deepcopy(tools)
+        if not self.strict_tools:
+            for tool in safe_tools:
+                function = tool.get("function") if isinstance(tool, Mapping) else None
+                if isinstance(function, dict):
+                    function.pop("strict", None)
+        payload: dict[str, object] = {
+            "model": self.model,
+            "messages": [self._message_to_wire(message) for message in messages],
+            "tools": safe_tools,
+            "tool_choice": "auto",
+            "stream": False,
+        }
+        if self.thinking_mode is not None:
+            payload["thinking"] = {"type": self.thinking_mode}
+        if self.max_tokens is not None:
+            payload["max_tokens"] = self.max_tokens
+        return payload
 
     @staticmethod
     def _message_to_wire(message: AgentMessage) -> dict[str, object]:

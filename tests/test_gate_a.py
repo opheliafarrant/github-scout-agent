@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 
 import pytest
+from typer.testing import CliRunner
 
+from github_scout_agent.cli import app
 from github_scout_agent.gate_a import GateAConfig, run_gate_a_dry_run
 
 
@@ -75,3 +77,15 @@ def test_gate_a_result_is_json_safe_and_contains_no_secret() -> None:
     encoded = json.dumps(result.model_dump(), ensure_ascii=False)
     assert "dry-run-placeholder" not in encoded
     assert "Authorization" not in encoded
+
+
+def test_gate_a_cli_requires_explicit_dry_run_or_online_confirmation() -> None:
+    runner = CliRunner()
+
+    no_mode = runner.invoke(app, ["gate-a"])
+    no_confirmation = runner.invoke(app, ["gate-a", "--online"])
+    conflicting = runner.invoke(app, ["gate-a", "--dry-run", "--online", "--confirm-live"])
+
+    assert no_mode.exit_code == 2
+    assert no_confirmation.exit_code == 2
+    assert conflicting.exit_code == 2
