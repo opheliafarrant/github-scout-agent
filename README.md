@@ -1,14 +1,17 @@
 # GitHub Scout Agent
 
-S3-01 foundation for a read-only, evidence-backed GitHub research agent.
+S3-02 foundation for a read-only, evidence-backed GitHub research agent.
 
-This stage provides only:
+The current foundation provides:
 
 - a Python package and CLI entry point;
 - safe environment-based configuration status;
-- offline tests for import, version, help, and configuration validation.
+- a fixed registry for five schema-validated GitHub read-only tools;
+- an HTTPX-based, fixed-host GitHub REST client with injectable MockTransport;
+- deterministic request, response-size, and candidate budgets;
+- offline tests for import, version, help, configuration, tools, errors, and security boundaries.
 
-It does not call GitHub, call a model, execute repository code, or implement the Agent Loop.
+It still does not call GitHub, call a model, execute repository code, or implement the Agent Loop.
 
 ## Local commands
 

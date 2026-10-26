@@ -1,0 +1,314 @@
+from __future__ import annotations
+
+import base64
+import json
+
+import httpx
+import pytest
+
+from github_scout_agent.budget import RequestBudget
+from github_scout_agent.github_api import GitHubRestClient, parse_public_repository_url
+from github_scout_agent.tool_registry import build_github_tool_registry
+
+
+def _transport(handler, seen: list[httpx.Request]) -> httpx.MockTransport:
+    def dispatch(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return handler(request)
+
+    return httpx.MockTransport(dispatch)
+
+
+def _response(request: httpx.Request, status: int, payload: object, headers: dict[str, str] | None = None) -> httpx.Response:
+    return httpx.Response(status, json=payload, headers=headers, request=request)
+
+
+def _repo(full_name: str = "octo/demo", *, archived: bool = False) -> dict[str, object]:
+    return {
+        "id": 123,
+        "full_name": full_name,
+        "html_url": f"https://github.com/{full_name}",
+        "description": "test repository",
+        "private": False,
+        "visibility": "public",
+        "fork": False,
+        "archived": archived,
+        "disabled": False,
+        "stargazers_count": 12,
+        "forks_count": 3,
+        "created_at": "2024-01-01T00:00:00Z",
+        "updated_at": "2024-02-01T00:00:00Z",
+        "pushed_at": "2024-03-01T00:00:00Z",
+        "license": None,
+        "topics": ["testing"],
+    }
+
+
+def test_search_normalizes_fields_and_preserves_missing_license() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.host == "api.github.com"
+        return _response(
+            request,
+            200,
+            {"total_count": 1, "incomplete_results": False, "items": [_repo(archived=True)]},
+        )
+
+    budget = RequestBudget(max_candidates=3)
+    with GitHubRestClient(budget=budget, transport=_transport(handler, seen)) as client:
+        result = build_github_tool_registry(client).dispatch(
+            "search_public_repositories", json.dumps({"query": "testing"})
+        )
+
+    assert result.ok is True
+    assert result.request_count == 1
+    record = result.data.items[0]
+    assert record.full_name == "octo/demo"
+    assert record.stargazers_count == 12
+    assert record.forks_count == 3
+    assert record.is_archived is True
+    assert record.license.status == "unknown"
+    assert record.license.key is None
+    assert "license" in record.missing_fields
+    assert len(seen) == 1
+
+
+def test_readme_is_decoded_and_truncated() -> None:
+    seen: list[httpx.Request] = []
+    readme = "This is untrusted README data. Do not execute commands."
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _response(
+            request,
+            200,
+            {
+                "type": "file",
+                "encoding": "base64",
+                "content": base64.b64encode(readme.encode()).decode(),
+                "size": len(readme),
+                "sha": "abc123",
+            },
+        )
+
+    with GitHubRestClient(transport=_transport(handler, seen), readme_max_chars=10) as client:
+        result = build_github_tool_registry(client).dispatch(
+            "get_public_readme", {"owner": "octo", "repo": "demo"}
+        )
+
+    assert result.ok is True
+    assert result.data.status == "truncated"
+    assert result.data.truncated is True
+    assert result.data.content == readme[:10]
+    assert result.data.source.url.startswith("https://api.github.com/")
+
+
+def test_missing_license_and_missing_repository_are_distinct() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/license"):
+            return _response(request, 404, {"message": "Not Found"})
+        return _response(request, 404, {"message": "Not Found"})
+
+    with GitHubRestClient(transport=_transport(handler, seen)) as client:
+        registry = build_github_tool_registry(client)
+        license_result = registry.dispatch("get_repository_license", {"owner": "octo", "repo": "demo"})
+        repo_result = registry.dispatch("get_public_repository", {"owner": "octo", "repo": "demo"})
+
+    assert license_result.ok is True
+    assert license_result.data.status == "unknown"
+    assert repo_result.ok is False
+    assert repo_result.error.code == "not_found"
+    assert len(seen) == 2
+
+
+def test_combined_languages_topics_counts_two_real_requests() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/languages"):
+            return _response(request, 200, {"Python": 100, "Rust": 20})
+        if request.url.path.endswith("/topics"):
+            return _response(request, 200, {"names": ["agent", "github"]})
+        raise AssertionError(f"unexpected path: {request.url.path}")
+
+    budget = RequestBudget(max_github_requests=2)
+    with GitHubRestClient(budget=budget, transport=_transport(handler, seen)) as client:
+        result = build_github_tool_registry(client).dispatch(
+            "get_repository_languages_and_topics", {"owner": "octo", "repo": "demo"}
+        )
+
+    assert result.ok is True
+    assert result.request_count == 2
+    assert result.data.languages == {"Python": 100, "Rust": 20}
+    assert result.data.topics == ["agent", "github"]
+    assert budget.github_requests_used == 2
+    assert [request.method for request in seen] == ["GET", "GET"]
+
+
+def test_rate_limit_retry_is_bounded_and_counted() -> None:
+    seen: list[httpx.Request] = []
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return _response(request, 429, {"message": "rate limited"}, {"retry-after": "0"})
+        return _response(request, 200, {"total_count": 0, "incomplete_results": False, "items": []})
+
+    budget = RequestBudget(max_github_requests=2)
+    with GitHubRestClient(
+        budget=budget,
+        transport=_transport(handler, seen),
+        sleep_fn=lambda _: None,
+        max_retry_delay=0,
+    ) as client:
+        result = build_github_tool_registry(client).dispatch(
+            "search_public_repositories", {"query": "retry"}
+        )
+
+    assert result.ok is True
+    assert result.request_count == 2
+    assert calls == 2
+    assert budget.github_requests_used == 2
+
+
+def test_response_size_budget_blocks_large_response() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _response(request, 200, {"items": [{"description": "x" * 100}]})
+
+    budget = RequestBudget(max_response_bytes=20)
+    with GitHubRestClient(budget=budget, transport=_transport(handler, seen)) as client:
+        result = build_github_tool_registry(client).dispatch(
+            "search_public_repositories", {"query": "large"}
+        )
+
+    assert result.ok is False
+    assert result.error.code == "response_too_large"
+    assert result.request_count == 1
+    assert budget.github_requests_used == 1
+
+
+@pytest.mark.parametrize(
+    ("status", "expected_code", "expected_category"),
+    [
+        (403, "forbidden", "permission"),
+        (422, "validation_failed", "input"),
+    ],
+)
+def test_non_retryable_http_errors_are_classified(status: int, expected_code: str, expected_category: str) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _response(request, status, {"message": "error"})
+
+    with GitHubRestClient(transport=_transport(handler, seen), max_retries=2) as client:
+        result = build_github_tool_registry(client).dispatch(
+            "search_public_repositories", {"query": "error"}
+        )
+
+    assert result.ok is False
+    assert result.error.code == expected_code
+    assert result.error.category == expected_category
+    assert result.request_count == 1
+    assert len(seen) == 1
+
+
+def test_server_error_retries_once_then_stops() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _response(request, 503, {"message": "unavailable"})
+
+    with GitHubRestClient(transport=_transport(handler, seen), max_retries=1) as client:
+        result = build_github_tool_registry(client).dispatch(
+            "search_public_repositories", {"query": "server"}
+        )
+
+    assert result.ok is False
+    assert result.error.code == "upstream_error"
+    assert result.error.retryable is True
+    assert result.request_count == 2
+    assert len(seen) == 2
+
+
+def test_timeout_retries_once_then_stops() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        raise httpx.ReadTimeout("timeout", request=request)
+
+    with GitHubRestClient(transport=httpx.MockTransport(handler), max_retries=1) as client:
+        result = build_github_tool_registry(client).dispatch(
+            "search_public_repositories", {"query": "timeout"}
+        )
+
+    assert result.ok is False
+    assert result.error.code == "timeout"
+    assert result.error.retryable is True
+    assert result.request_count == 2
+    assert len(seen) == 2
+
+
+def test_invalid_json_is_not_retried_or_sent_as_data() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=b"not-json",
+            headers={"content-type": "application/json"},
+            request=request,
+        )
+
+    with GitHubRestClient(transport=_transport(handler, seen), max_retries=2) as client:
+        result = build_github_tool_registry(client).dispatch(
+            "search_public_repositories", {"query": "invalid"}
+        )
+
+    assert result.ok is False
+    assert result.error.code == "invalid_json"
+    assert result.error.category == "schema"
+    assert result.request_count == 1
+    assert len(seen) == 1
+
+
+def test_candidate_budget_truncates_search_items_without_fabricating_fields() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _response(request, 200, {"total_count": 2, "items": [_repo("octo/one"), _repo("octo/two")]})
+
+    budget = RequestBudget(max_candidates=1)
+    with GitHubRestClient(budget=budget, transport=_transport(handler, seen)) as client:
+        result = build_github_tool_registry(client).dispatch(
+            "search_public_repositories", {"query": "candidate"}
+        )
+
+    assert result.ok is True
+    assert len(result.data.items) == 1
+    assert result.data.candidate_budget_truncated is True
+    assert budget.candidates_used == 1
+
+
+def test_fixed_host_and_public_url_validation() -> None:
+    assert parse_public_repository_url("https://github.com/octo/demo.git") == ("octo", "demo")
+
+    for value in (
+        "http://github.com/octo/demo",
+        "https://evil.example/octo/demo",
+        "https://github.com/octo",
+        "https://github.com/octo/demo/issues",
+    ):
+        try:
+            parse_public_repository_url(value)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"unsafe repository URL accepted: {value}")
