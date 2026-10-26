@@ -44,6 +44,52 @@ def config_command() -> None:
     typer.echo("S3-03 real model and GitHub connections are not enabled by this command.")
 
 
+@app.command("run")
+def run_command(
+    task: str = typer.Argument(..., help="Natural-language GitHub research task."),
+    confirm_live: bool = typer.Option(False, "--confirm-live", help="Required before any real model/GitHub request."),
+) -> None:
+    """Run the real CLI MVP path; requires explicit confirmation."""
+
+    import json
+
+    if not confirm_live:
+        typer.echo("run is network-capable only with --confirm-live; no request was made.", err=True)
+        raise typer.Exit(code=2)
+    from .application import render_mvp_report, run_research_task
+    from .budget import RequestBudget
+    from .github_api import GitHubRestClient
+    from .model_client import ModelAdapterError, OpenAICompatibleClient
+
+    try:
+        config = load_config()
+        if not config.model_ready:
+            typer.echo("Model configuration is incomplete; no request was made.", err=True)
+            raise typer.Exit(code=2)
+        budget = RequestBudget(
+            max_model_calls=5,
+            max_github_requests=8,
+            max_candidates=3,
+            max_task_seconds=120,
+            max_feedback_bytes=32 * 1024,
+            max_model_response_bytes=16 * 1024,
+        )
+        github_token = config.github_token.get_secret_value() if config.github_token else None
+        with GitHubRestClient(token=github_token, budget=budget, timeout=15.0) as github:
+            with OpenAICompatibleClient.from_config(config, budget=budget, timeout=15.0) as model:
+                result = run_research_task(task, model=model, github=github, budget=budget)
+        typer.echo(render_mvp_report(task, result))
+        typer.echo("\n## Execution events\n" + "\n".join(
+            f"- {event.event_type}: {json.dumps(event.details, ensure_ascii=False, sort_keys=True)}"
+            for event in result.events
+        ))
+        if result.status != "completed":
+            raise typer.Exit(code=1)
+    except ModelAdapterError as exc:
+        typer.echo(f"Model error: {exc.code}; no retry was attempted.", err=True)
+        raise typer.Exit(code=1) from exc
+
+
 @app.command("mock-demo")
 def mock_demo_command() -> None:
     """Run one fully offline, feedback-driven Agent Loop demonstration."""

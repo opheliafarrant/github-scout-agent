@@ -50,3 +50,10 @@ def test_mock_demo_runs_without_credentials_or_network(monkeypatch) -> None:
     assert "tool_call_requested" in result.stdout
     assert "status=completed" in result.stdout
     assert "api_key" not in result.stdout.lower()
+
+
+def test_run_requires_explicit_confirmation(monkeypatch) -> None:
+    result = runner.invoke(app, ["run", "find public repositories"])
+
+    assert result.exit_code == 2
+    assert "no request was made" in result.stderr
