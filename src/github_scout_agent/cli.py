@@ -1,4 +1,4 @@
-"""CLI entry point for the S3-01 foundation."""
+"""CLI entry point for the S3 foundation and offline Agent Loop demo."""
 
 from __future__ import annotations
 
@@ -41,7 +41,24 @@ def config_command() -> None:
     typer.echo(f"model_configuration: {model_configuration_status(config)}")
     if not config.model_api_key:
         typer.echo("Model API Key is not configured; no model call will be attempted.")
-    typer.echo("S3-01 foundation does not connect to GitHub or a model API.")
+    typer.echo("S3-03 real model and GitHub connections are not enabled by this command.")
+
+
+@app.command("mock-demo")
+def mock_demo_command() -> None:
+    """Run one fully offline, feedback-driven Agent Loop demonstration."""
+
+    import json
+
+    from .demo import run_mock_demo
+
+    result = run_mock_demo()
+    for event in result.events:
+        typer.echo(f"[{event.event_type}] {json.dumps(event.details, ensure_ascii=False, sort_keys=True)}")
+    typer.echo(
+        f"status={result.status} termination={result.termination_reason} "
+        f"budget={json.dumps(result.budget, ensure_ascii=False, sort_keys=True)}"
+    )
 
 
 if __name__ == "__main__":

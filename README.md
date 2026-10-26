@@ -1,6 +1,6 @@
 # GitHub Scout Agent
 
-S3-02 foundation for a read-only, evidence-backed GitHub research agent.
+S3-03 foundation for a read-only, evidence-backed GitHub research agent.
 
 The current foundation provides:
 
@@ -9,9 +9,11 @@ The current foundation provides:
 - a fixed registry for five schema-validated GitHub read-only tools;
 - an HTTPX-based, fixed-host GitHub REST client with injectable MockTransport;
 - deterministic request, response-size, and candidate budgets;
+- a synchronous, injectable Mock-LLM Agent Loop with redacted execution events;
+- an offline `mock-demo` CLI command showing feedback-driven query rewriting;
 - offline tests for import, version, help, configuration, tools, errors, and security boundaries.
 
-It still does not call GitHub, call a model, execute repository code, or implement the Agent Loop.
+It still does not call real GitHub or model endpoints, execute repository code, or provide a production model client.
 
 ## Local commands
 
@@ -21,6 +23,7 @@ python -m venv .venv
 \.venv\Scripts\github-scout-agent.exe --help
 \.venv\Scripts\github-scout-agent.exe version
 \.venv\Scripts\github-scout-agent.exe config
+\.venv\Scripts\github-scout-agent.exe mock-demo
 \.venv\Scripts\python.exe -m pytest
 ```
 
