@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from github_scout_agent.gate_b import run_gate_b_dry_run
+from github_scout_agent.gate_b import run_gate_b_online
 
 
 def test_gate_b_dry_run_executes_three_model_rounds_and_four_mock_gets() -> None:
@@ -32,3 +33,21 @@ def test_gate_b_dry_run_preserves_budget_and_network_isolation() -> None:
     assert result.budget["accepted_candidate_count"] == 3
     assert result.budget["fatal_exhausted_dimensions"] == ()
     assert result.real_network_requests == 0
+
+
+def test_gate_b_online_preflight_blocks_without_key_and_does_not_create_record(monkeypatch, tmp_path) -> None:
+    for name in (
+        "GITHUB_SCOUT_MODEL_BASE_URL",
+        "GITHUB_SCOUT_MODEL",
+        "GITHUB_SCOUT_MODEL_THINKING_MODE",
+        "GITHUB_SCOUT_MODEL_STRICT_TOOLS",
+        "GITHUB_SCOUT_MODEL_MAX_TOKENS",
+        "GITHUB_SCOUT_MODEL_API_KEY",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    result = run_gate_b_online()
+
+    assert result.status == "blocked"
+    assert result.termination_reason == "missing_api_key"
+    assert result.real_model_requests == 0
