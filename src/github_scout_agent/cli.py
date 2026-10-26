@@ -118,5 +118,24 @@ def gate_a_command(
         raise typer.Exit(code=1)
 
 
+@app.command("gate-b")
+def gate_b_command(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Required: run only the offline Mock LLM + Mock GitHub chain."),
+) -> None:
+    """Run the offline-only Gate B compatibility chain."""
+
+    import json
+
+    if not dry_run:
+        typer.echo("Gate B online mode is not implemented or authorized; pass --dry-run.", err=True)
+        raise typer.Exit(code=2)
+    from .gate_b import run_gate_b_dry_run
+
+    result = run_gate_b_dry_run()
+    typer.echo(json.dumps(result.model_dump(), ensure_ascii=False, sort_keys=True))
+    if result.status != "completed":
+        raise typer.Exit(code=1)
+
+
 if __name__ == "__main__":
     app()

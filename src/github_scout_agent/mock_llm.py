@@ -155,3 +155,63 @@ class ScenarioMockLLM:
             ],
             finish_reason="tool_calls",
         )
+
+
+class GateBMockLLM:
+    """Three-turn mock that exercises multiple calls and evidence follow-up."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def complete(self, messages: list[AgentMessage], tools: list[dict[str, Any]]) -> AssistantResponse:
+        del tools
+        self.calls += 1
+        tool_messages = [message for message in messages if message.role == "tool"]
+        if not tool_messages:
+            return AssistantResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="gate-b-search-1",
+                        name="search_public_repositories",
+                        arguments=json.dumps({"query": "python agent native tool calling"}),
+                    ),
+                    ToolCall(
+                        id="gate-b-search-2",
+                        name="search_public_repositories",
+                        arguments=json.dumps({"query": "python tool calling framework"}),
+                    ),
+                ],
+                finish_reason="tool_calls",
+            )
+        if len(tool_messages) == 2:
+            first_payload = self._payload(tool_messages[0])
+            items = first_payload.get("data", {}).get("items", []) if isinstance(first_payload.get("data"), dict) else []
+            full_name = items[0].get("full_name", "octo/alpha") if items else "octo/alpha"
+            owner, repo = str(full_name).split("/", 1)
+            return AssistantResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="gate-b-detail",
+                        name="get_public_repository",
+                        arguments=json.dumps({"owner": owner, "repo": repo}),
+                    ),
+                    ToolCall(
+                        id="gate-b-readme",
+                        name="get_public_readme",
+                        arguments=json.dumps({"owner": owner, "repo": repo}),
+                    ),
+                ],
+                finish_reason="tool_calls",
+            )
+        return AssistantResponse(
+            content="Mock compared the accepted candidates using returned evidence; missing fields remain unknown.",
+            finish_reason="stop",
+        )
+
+    @staticmethod
+    def _payload(message: AgentMessage) -> dict[str, Any]:
+        try:
+            payload = json.loads(message.content)
+        except json.JSONDecodeError:
+            return {}
+        return payload if isinstance(payload, dict) else {}

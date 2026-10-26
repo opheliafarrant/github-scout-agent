@@ -35,6 +35,8 @@ python -m venv .venv
 \.venv\Scripts\github-scout-agent.exe gate-a --dry-run
 # Online Gate A requires both flags and a local key; do not run without explicit authorization.
 \.venv\Scripts\github-scout-agent.exe gate-a --online --confirm-live
+# Offline-only Gate B compatibility chain.
+\.venv\Scripts\github-scout-agent.exe gate-b --dry-run
 ```
 
 Configuration status reads these environment variables without printing their values:
