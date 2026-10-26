@@ -84,9 +84,11 @@ def render_mvp_report(task: str, result: AgentRunResult) -> str:
         elif getattr(data, "status", None):
             summary["status"] = data.status
             summary["trust_label"] = getattr(data, "trust_label", None)
+            summary["sources"] = _source_urls(data)
         elif getattr(data, "languages", None) is not None:
             summary["language_count"] = len(data.languages)
             summary["topic_count"] = len(data.topics)
+            summary["sources"] = _source_urls(data)
         elif getattr(data, "incomplete_results", None) is not None:
             summary["candidate_count"] = len(data.items)
             summary["incomplete_results"] = data.incomplete_results

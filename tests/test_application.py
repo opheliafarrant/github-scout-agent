@@ -70,6 +70,7 @@ def test_production_application_assembly_works_with_mock_transports() -> None:
     assert result.status == "completed"
     assert "octo/demo" in report
     assert "https://github.com/octo/demo" in report
+    assert "api.github.com/search/repositories" in report
     assert "Evidence reviewed." in report
     assert "model_calls_used" in report
     assert model_calls == 2

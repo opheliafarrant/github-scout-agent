@@ -75,7 +75,7 @@ def run_command(
             max_model_response_bytes=16 * 1024,
         )
         github_token = config.github_token.get_secret_value() if config.github_token else None
-        with GitHubRestClient(token=github_token, budget=budget, timeout=15.0) as github:
+        with GitHubRestClient(token=github_token, budget=budget, timeout=15.0, max_retries=0) as github:
             with OpenAICompatibleClient.from_config(config, budget=budget, timeout=15.0) as model:
                 result = run_research_task(task, model=model, github=github, budget=budget)
         typer.echo(render_mvp_report(task, result))
@@ -85,8 +85,8 @@ def run_command(
         ))
         if result.status != "completed":
             raise typer.Exit(code=1)
-    except ModelAdapterError as exc:
-        typer.echo(f"Model error: {exc.code}; no retry was attempted.", err=True)
+    except (ModelAdapterError, ValidationError, ValueError) as exc:
+        typer.echo(f"Model error: {getattr(exc, 'code', 'invalid_configuration')}; no retry was attempted.", err=True)
         raise typer.Exit(code=1) from exc
 
 
