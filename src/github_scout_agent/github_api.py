@@ -191,6 +191,7 @@ class GitHubRestClient:
         self._max_retry_delay = max_retry_delay
         self._fallback_retry_delay = fallback_retry_delay
         self._readme_max_chars = readme_max_chars
+        self.request_log: list[dict[str, object]] = []
         headers = {
             "Accept": "application/vnd.github+json",
             "User-Agent": "github-scout-agent/0.1.0",
@@ -249,6 +250,16 @@ class GitHubRestClient:
                     status = response.status_code
                     response_url = str(response.request.url)
                     response_headers = response.headers
+                    self.request_log.append(
+                        {
+                            "method": "GET",
+                            "host": response.request.url.host,
+                            "path": response.request.url.path,
+                            "status_code": status,
+                            "attempt": attempt,
+                            "response_bytes": response_size,
+                        }
+                    )
             except BudgetExceeded:
                 raise
             except httpx.TimeoutException as exc:

@@ -25,6 +25,8 @@ python -m venv .venv
 \.venv\Scripts\github-scout-agent.exe config
 \.venv\Scripts\github-scout-agent.exe mock-demo
 \.venv\Scripts\python.exe -m pytest
+# Explicit real GitHub public REST verification; never runs by default.
+\.venv\Scripts\python.exe -m pytest -m live_github -s
 ```
 
 Configuration status reads these environment variables without printing their values:
@@ -34,4 +36,4 @@ Configuration status reads these environment variables without printing their va
 - `GITHUB_SCOUT_MODEL_API_KEY`
 - `GITHUB_TOKEN`
 
-S3-01 does not use these values to make network requests.
+S3-01/S3-03 do not use these values to make real network requests. S4-01 live verification uses a bounded public-only budget; a configured `GITHUB_TOKEN` is optional and never printed.

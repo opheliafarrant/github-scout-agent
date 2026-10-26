@@ -28,4 +28,7 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-addopts = "-q"
+addopts = "-q -m 'not live_github'"
+markers = [
+    "live_github: explicit real GitHub public REST API verification; never run by default",
+]
