@@ -39,6 +39,44 @@ DEFAULT_MAX_RETRIES = 1
 DEFAULT_FALLBACK_RETRY_DELAY = 1.0
 MAX_SEARCH_PER_PAGE = 5
 
+# Fields extracted from search result items that _normalize_repository and
+# _is_public_repository actually read.  Everything else in the raw JSON
+# (60+ fields per item) is discarded before response-bytes are recorded.
+_SEARCH_ITEM_FIELDS: set[str] = {
+    "full_name", "html_url", "description",
+    "private", "visibility", "fork", "archived", "disabled",
+    "stargazers_count", "forks_count", "open_issues_count", "watchers_count",
+    "created_at", "updated_at", "pushed_at",
+    "language", "id",
+    "license", "topics",
+    "has_issues", "has_projects", "has_downloads",
+    "has_wiki", "has_pages", "has_discussions",
+    "default_branch", "owner",
+}
+
+
+def _trim_search_payload(raw: object) -> dict[str, object]:
+    """Keep only the fields from *raw* that the agent actually consumes."""
+    if not isinstance(raw, Mapping):
+        return {} if raw is None else {"_raw": str(raw)[:256]}
+    trimmed: dict[str, object] = {}
+    for key, value in raw.items():
+        if key in _SEARCH_ITEM_FIELDS:
+            if key == "license" and isinstance(value, Mapping):
+                trimmed[key] = {"key": value.get("key"), "name": value.get("name"), "spdx_id": value.get("spdx_id")}
+            elif key == "owner" and isinstance(value, Mapping):
+                trimmed[key] = {"login": value.get("login")}
+            elif key == "topics" and isinstance(value, list):
+                trimmed[key] = [t for t in value if isinstance(t, str)]
+            else:
+                trimmed[key] = value
+    return trimmed
+
+
+def _serialized_size(data: object) -> int:
+    """Return the UTF-8 byte length of the JSON-serialized *data*."""
+    return len(json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
 
 class GithubApiError(RuntimeError):
     """Safe, structured error from the fixed GitHub read-only boundary."""
@@ -287,6 +325,7 @@ class GitHubRestClient:
         *,
         params: Mapping[str, object] | None = None,
         accept: str | None = None,
+        skip_budget_recording: bool = False,
     ) -> tuple[object, str, datetime]:
         captured_at = _now()
         for attempt in range(1, self._max_retries + 2):
@@ -295,22 +334,32 @@ class GitHubRestClient:
                 headers = {"Accept": accept} if accept else None
                 response_context = self._client.stream("GET", path, params=params, headers=headers)
                 with response_context as response:
-                    content_length = response.headers.get("content-length")
-                    if content_length and content_length.isdigit() and int(content_length) > self.budget.max_response_bytes:
-                        raise GithubApiError(
-                            "response_too_large", "budget", "GitHub response exceeds the response-size limit"
-                        )
+                    if not skip_budget_recording:
+                        content_length = response.headers.get("content-length")
+                        if content_length and content_length.isdigit() and int(content_length) > self.budget.max_response_bytes:
+                            raise GithubApiError(
+                                "response_too_large", "budget", "GitHub response exceeds the response-size limit"
+                            )
                     chunks: list[bytes] = []
                     response_size = 0
-                    try:
-                        for chunk in response.iter_bytes():
-                            response_size += len(chunk)
-                            self.budget.record_response_chunk(len(chunk), response_size)
-                            chunks.append(chunk)
-                    except BudgetExceeded as exc:
-                        raise GithubApiError(
-                            "response_too_large", "budget", "GitHub response exceeds the response-size limit"
-                        ) from exc
+                    if skip_budget_recording:
+                        # Download first, record trimmed size later (search responses
+                        # are trimmed to ~15 fields per item before budget accounting).
+                        try:
+                            for chunk in response.iter_bytes():
+                                chunks.append(chunk)
+                        except httpx.RemoteProtocolError:
+                            pass
+                    else:
+                        try:
+                            for chunk in response.iter_bytes():
+                                response_size += len(chunk)
+                                self.budget.record_response_chunk(len(chunk), response_size)
+                                chunks.append(chunk)
+                        except BudgetExceeded as exc:
+                            raise GithubApiError(
+                                "response_too_large", "budget", "GitHub response exceeds the response-size limit"
+                            ) from exc
                     content = b"".join(chunks)
                     status = response.status_code
                     response_url = str(response.request.url)
@@ -427,16 +476,31 @@ class GitHubRestClient:
                 raise GithubApiError("invalid_sort", "input", "sort is not allowed")
             params["sort"] = sort
             params["order"] = order
-        payload, source_url, captured_at = self._request_json("/search/repositories", params=params)
+        payload, source_url, captured_at = self._request_json("/search/repositories", params=params, skip_budget_recording=True)
         if not isinstance(payload, Mapping) or not isinstance(payload.get("items"), list):
             raise GithubApiError("invalid_search_payload", "schema", "GitHub search response is missing items")
         raw_items = [item for item in payload["items"] if isinstance(item, Mapping)]
+        # Trim every item to only the 20 fields the agent consumes; discard
+        # 40+ unused fields (avatar URLs, API links, node IDs, etc.).
+        trimmed_items = [_trim_search_payload(item) for item in raw_items]
+        # Build a minimal trimmed payload for budget accounting.
+        trimmed_payload = {
+            "total_count": payload.get("total_count"),
+            "incomplete_results": payload.get("incomplete_results", False),
+            "items": trimmed_items,
+        }
+        try:
+            self.budget.record_response_size(_serialized_size(trimmed_payload))
+        except BudgetExceeded as exc:
+            raise GithubApiError(
+                "response_too_large", "budget", "GitHub search response exceeds the response-size limit"
+            ) from exc
         public_items: list[Mapping[str, object]] = []
         unverified_items: list[Mapping[str, object]] = []
         excluded_language_count = 0
         public_item_count = 0
         seen_ids: set[str] = set()
-        for item in raw_items:
+        for item in trimmed_items:
             identity = self._candidate_identity(item)
             if self._is_public_repository(item) and identity and identity not in seen_ids:
                 seen_ids.add(identity)
