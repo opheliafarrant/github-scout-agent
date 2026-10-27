@@ -105,7 +105,7 @@ async def _run_and_stream(task_id: str, req: TaskRequest, request: Request) -> A
         max_github_requests=req.max_github_requests,
         max_candidates=req.max_candidates,
         max_task_seconds=req.max_task_seconds,
-        max_feedback_bytes=64 * 1024,
+        max_feedback_bytes=128 * 1024,
         max_model_response_bytes=32 * 1024,
         max_response_bytes=256 * 1024,
     )
