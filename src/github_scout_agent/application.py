@@ -130,8 +130,13 @@ def _candidate_records(tool_results: Iterable[Any]) -> list[Any]:
 
 
 def _report_is_complete(result: AgentRunResult) -> bool:
-    """Report 'complete' only when evidence gathering explicitly passes its own check."""
-    return result.status == "completed" and result.evidence_complete is True
+    """Report 'complete' only when evidence gathering passes its own check
+    AND at least one candidate has been accepted through investigation."""
+    return (
+        result.status == "completed"
+        and result.evidence_complete is True
+        and int(result.budget.get("accepted_candidate_count", 0)) > 0
+    )
 
 
 def render_mvp_report(task: str, result: AgentRunResult) -> str:
