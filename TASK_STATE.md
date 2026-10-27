@@ -3,7 +3,7 @@
 ## 1. Task Foundation
 - True Goal: 建立只读、有证据支持的 GitHub Scout Agent，并通过受限 Agent Loop 完成公开仓库候选发现、证据补充、透明对比与可核验推荐报告。
 - Current Stage: S4 验收与归档
-- Active Mainline: 自适应收敛与 Completeness 对齐交付完成；165 项测试通过。
+- Active Mainline: 深度证据研究与完整推荐闭环交付完成；167 项测试通过。
 
 ## 2. Frozen Baselines and Inline Evidence
 - F1 Fact Baseline (客观状态与实测结论):
@@ -30,7 +30,8 @@
   - F3-27: README 关键词意图穿透提交：`2a147eb` (`fix: enforce require_candidate_readme on explicit readme and documentation keywords`)。
   - F3-28: 产品级质量修复提交：`5ad1114` (`fix: product quality — always-on policy, evidence-driven completeness, richer tool descriptions`)。
   - F3-29: 自适应研究收敛与限流熔断提交：`c8b4bde` (`fix: adaptive research convergence, rate limit short-circuiting, and graceful finalization`)。
-  - F3-30 (Current Rollback Anchor): `72c431d` (`fix: _report_is_complete requires accepted_candidate_count > 0`) | Dirty Tree Status: Clean (仅 2 份用户已删除的 doc 文件未暂存)。
+  - F3-30: `72c431d` (`fix: _report_is_complete requires accepted_candidate_count > 0`)。
+  - F3-31 (Current Rollback Anchor): `58839a5` (`fix: deep evidence research, candidate exclusion, and complete recommendation loop`) | Dirty Tree Status: Clean (仅 2 份用户已删除的 doc 文件未暂存)。
 ## 3. Current Engineering Flow and Impediments
 - Current Impediment / Stop Point: 无阻碍；深度证据研究、相关性筛选与完整推荐闭环交付完成，167 项离线测试全部通过。
 - [x] T42: 完成深度证据研究、相关性筛选与完整推荐闭环 -> Target Artifact: src/ & tests/ | Verification: 167 pytest 全部通过，包含核心验收场景端到端测试。
