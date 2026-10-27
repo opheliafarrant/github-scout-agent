@@ -3,7 +3,7 @@
 ## 1. Task Foundation
 - True Goal: 建立只读、有证据支持的 GitHub Scout Agent，并通过受限 Agent Loop 完成公开仓库候选发现、证据补充、透明对比与可核验推荐报告。
 - Current Stage: S4 验收与归档
-- Active Mainline: V1.1 Web UI 真实浏览器端到端验收成功 (T45 已闭环)；系统稳定归档。
+- Active Mainline: V1.1 搜索响应字段裁剪 — 每次搜索只保留 18 个消费字段，单次搜索响应预算从 ~50KB 降至 ~3KB；176 项测试通过。
 
 ## 2. Frozen Baselines and Inline Evidence
 - F1 Fact Baseline (客观状态与实测结论):
@@ -31,10 +31,12 @@
 - F3 Version Baseline and Rollback Anchor:
   - F3-36: `5707240` (`docs: document V1.1 Web UI command, features, and 173 test coverage`)。
   - F3-37: `4514e2d` (`fix: retry transient model network errors with backoff and improve Web UI error display`)。
-  - F3-38 (Current Rollback Anchor): `16c5957` (`docs: sync TASK_STATE with T45 Web UI live acceptance verification`) | Dirty Tree Status: Clean (仅 2 份用户已删除的 doc 文件未暂存)。
+  - F3-38: `16c5957` (`docs: sync TASK_STATE with T45 Web UI live acceptance verification`)。
+  - F3-39 (Current Rollback Anchor): 搜索响应裁剪 `<latest>` — skip_budget_recording + _trim_search_payload，待提交。
 ## 3. Current Engineering Flow and Impediments
-- Current Impediment / Stop Point: 无阻碍。CLI 与 Web UI 全双工验收通过，所有主线任务闭环。
+- Current Impediment / Stop Point: 无阻碍。搜索响应裁剪完成，待用户在浏览器中复现 Python CLI 对比任务。
 - [x] T45: V1.1 Web UI 浏览器端到端验收（启动 web → 输入需求 → SSE 实时观察 → 阅读报告）已成功跑通 [E3: Python CLI 选型实测]。
+- [ ] T47: 搜索响应裁剪线上复现验收（Python CLI 对比任务，response_too_large 不再阻断研究）。
 - [x] T46: 完成模型网络抖动重试机制与 Web UI 异常状态显性化 -> Target Artifact: src/ & tests/ | Verification: 176 项 pytest 全通过。
 - [x] T44: 线上真实端点验收（deepseek-flash + GitHub API） → Target Artifact: 线上运行报告 | Verification: 4 搜索 + 3 README + 1 排除 + 2 条件推荐 + 四段报告。
 - [x] T43: 修复 CLI response_bytes 预算过低导致 README 阶段被跳过 → Target Artifact: src/github_scout_agent/cli.py | Verification: 167 全通过；线上 response_bytes 60KB/256KB。
