@@ -626,6 +626,27 @@ class GitHubRestClient:
             source=_source(source_url, captured_at),
         )
 
+    def replace_candidate_with_readme(
+        self, *, source_owner: str, source_repo: str, target_owner: str, target_repo: str
+    ) -> ReadmeEvidence:
+        """Drop *source* and accept *target* as replacement with its README.
+
+        Use when README evidence reveals that an accepted candidate has been
+        superseded, deprecated, or was a mistaken selection.  The *source*
+        identity must already be in the accepted candidate set.
+        """
+        source_id = (
+            f"{validate_owner_repo_part(source_owner, 'source_owner')}"
+            f"/{validate_owner_repo_part(source_repo, 'source_repo')}"
+        )
+        if not self.budget.replace_candidate_ids(source_id):
+            raise GithubApiError(
+                "candidate_not_found",
+                "input",
+                f"'{source_id}' is not an accepted candidate; cannot replace",
+            )
+        return self.get_public_readme(owner=target_owner, repo=target_repo)
+
     def get_repository_license(self, *, owner: str, repo: str) -> LicenseEvidence:
         owner = validate_owner_repo_part(owner, "owner")
         repo = validate_owner_repo_part(repo, "repo")

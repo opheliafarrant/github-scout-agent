@@ -61,7 +61,7 @@ def web_command(
 def run_command(
     task: str = typer.Argument(..., help="Natural-language GitHub research task."),
     confirm_live: bool = typer.Option(False, "--confirm-live", help="Required before any real model/GitHub request."),
-    max_model_calls: int = typer.Option(10, "--max-model-calls", help="Maximum model completion rounds."),
+    max_model_calls: int = typer.Option(12, "--max-model-calls", help="Maximum model completion rounds."),
     max_github_requests: int = typer.Option(20, "--max-github-requests", help="Maximum GitHub REST GET requests."),
     max_candidates: int = typer.Option(3, "--max-candidates", help="Maximum accepted repository candidates."),
     max_task_seconds: int = typer.Option(180, "--max-task-seconds", help="Maximum task wall-clock seconds (default: 180)."),

@@ -12,12 +12,13 @@ EXPECTED_TOOLS = {
     "search_public_repositories",
     "get_public_repository",
     "get_public_readme",
+    "replace_candidate_with_readme",
     "get_repository_license",
     "get_repository_languages_and_topics",
 }
 
 
-def test_registry_has_exactly_the_five_predefined_tools() -> None:
+def test_registry_has_exactly_the_six_predefined_tools() -> None:
     transport = httpx.MockTransport(lambda request: httpx.Response(500, request=request))
     with GitHubRestClient(transport=transport) as client:
         registry = build_github_tool_registry(client)

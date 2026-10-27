@@ -29,7 +29,7 @@ web_app = FastAPI(title="GitHub Scout Agent", version="1.1.0")
 class TaskRequest(BaseModel):
     task: str = Field(..., min_length=1, max_length=2000)
     max_candidates: int = Field(default=3, ge=1, le=10)
-    max_model_calls: int = Field(default=10, ge=1, le=30)
+    max_model_calls: int = Field(default=12, ge=1, le=30)
     max_github_requests: int = Field(default=20, ge=1, le=60)
     max_task_seconds: int = Field(default=180, ge=10, le=600)
 

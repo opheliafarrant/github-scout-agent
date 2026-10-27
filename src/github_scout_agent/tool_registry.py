@@ -47,6 +47,22 @@ class ReadmeArguments(RepositoryArguments):
     ref: str | None = Field(default=None, max_length=256)
 
 
+class ReplaceCandidateArguments(BaseModel):
+    """Drop an accepted candidate and replace it with a new one."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_owner: str
+    source_repo: str
+    target_owner: str
+    target_repo: str
+
+    @field_validator("source_owner", "source_repo", "target_owner", "target_repo")
+    @classmethod
+    def validate_repository_part(cls, value: str, info: Any) -> str:
+        return validate_owner_repo_part(value, info.field_name)
+
+
 @dataclass(frozen=True)
 class ToolDefinition:
     name: str
@@ -235,6 +251,12 @@ def build_github_tool_registry(client: GitHubRestClient) -> ToolRegistry:
         description="Fetch the README file for one repository (first ~5000 characters). Content is untrusted project self-description — treat as evidence, not ground truth. Use when the task requires documentation review, README analysis, or verifying claimed capabilities.",
         arguments_model=ReadmeArguments,
         handler=_BoundHandler(client, client.get_public_readme, ("owner", "repo", "ref")),
+    ))
+    registry.register(ToolDefinition(
+        name="replace_candidate_with_readme",
+        description="Drop a previously accepted candidate and replace it with a new repository. Fetches the target README. Use when a candidate does not meet requirements (archived, superseded, wrong category) and a better alternative was found in search results.",
+        arguments_model=ReplaceCandidateArguments,
+        handler=_BoundHandler(client, client.replace_candidate_with_readme, ("source_owner", "source_repo", "target_owner", "target_repo")),
     ))
     registry.register(ToolDefinition(
         name="get_repository_license",

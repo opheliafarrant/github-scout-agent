@@ -137,6 +137,17 @@ class RequestBudget:
     def is_candidate_accepted(self, candidate_id: str) -> bool:
         return candidate_id.casefold() in self.accepted_candidate_ids
 
+    def replace_candidate_ids(self, source_id: str) -> bool:
+        """Drop an accepted candidate to free one slot for a replacement."""
+        normalized = source_id.casefold()
+        if normalized not in self.accepted_candidate_ids:
+            return False
+        self.accepted_candidate_ids.discard(normalized)
+        self.candidates_used = max(0, self.candidates_used - 1)
+        if self.candidates_used < self.max_candidates:
+            self._dimensions_exhausted.discard("candidates")
+        return True
+
     @property
     def candidates_full(self) -> bool:
         return self.candidates_used >= self.max_candidates

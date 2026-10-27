@@ -784,3 +784,81 @@ def test_fixed_host_and_public_url_validation() -> None:
             pass
         else:
             raise AssertionError(f"unsafe repository URL accepted: {value}")
+
+
+class TestReplaceCandidate:
+    """Tests for the replace_candidate_with_readme tool (T47 candidate swap)."""
+
+    def test_budget_replace_candidate_ids_drops_and_frees_slot(self) -> None:
+        from github_scout_agent.budget import RequestBudget
+
+        budget = RequestBudget(max_candidates=3)
+        budget.take_candidate_ids(["a", "b", "c"])
+        assert budget.candidates_used == 3
+        assert budget.candidates_full
+
+        assert budget.replace_candidate_ids("b")
+        assert "b" not in budget.accepted_candidate_ids
+        assert budget.candidates_used == 2
+        assert not budget.candidates_full
+
+    def test_budget_replace_unknown_candidate_returns_false(self) -> None:
+        from github_scout_agent.budget import RequestBudget
+
+        budget = RequestBudget(max_candidates=3)
+        budget.take_candidate_ids(["a"])
+        assert not budget.replace_candidate_ids("nonexistent")
+        assert budget.candidates_used == 1
+
+    def test_replace_candidate_with_readme_swaps_slots(self) -> None:
+        import httpx
+        from github_scout_agent.github_api import GitHubRestClient, GithubApiError
+
+        target_readme = {
+            "content": "bWFkZSB5b3UgbG9vaw==",  # "made you look" in base64
+            "encoding": "base64",
+            "size": 14,
+            "sha": "def456",
+        }
+
+        called_readme = None
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal called_readme
+            path = str(request.url)
+            if "/readme" in path:
+                called_readme = path
+                return httpx.Response(200, json=target_readme, request=request)
+            return httpx.Response(200, json={}, request=request)
+
+        with GitHubRestClient(transport=httpx.MockTransport(handler)) as client:
+            client.budget.take_candidate_ids(["old/repo"])
+            assert client.budget.candidates_used == 1
+            assert client.budget.is_candidate_accepted("old/repo")
+
+            evidence = client.replace_candidate_with_readme(
+                source_owner="old", source_repo="repo",
+                target_owner="new", target_repo="repo",
+            )
+            assert called_readme is not None
+            assert "new/repo/readme" in called_readme.replace("\\", "/")
+            assert evidence.status in ("available",)
+            assert "old" not in client.budget.accepted_candidate_ids
+            assert "new/repo" in client.budget.accepted_candidate_ids
+            assert client.budget.candidates_used == 1
+
+    def test_replace_candidate_rejects_unknown_source(self) -> None:
+        import httpx
+        from github_scout_agent.github_api import GitHubRestClient
+        from github_scout_agent.github_api import GithubApiError
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={}, request=request)
+
+        with GitHubRestClient(transport=httpx.MockTransport(handler)) as client:
+            with pytest.raises(GithubApiError) as exc_info:
+                client.replace_candidate_with_readme(
+                    source_owner="ghost", source_repo="town",
+                    target_owner="new", target_repo="repo",
+                )
+            assert exc_info.value.code == "candidate_not_found"
