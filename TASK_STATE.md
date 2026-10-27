@@ -33,7 +33,7 @@
   - F3-38: `16c5957` (`docs: sync TASK_STATE with T45 Web UI live acceptance verification`)。
   - F3-39: `cf97b02` (`fix: trim GitHub search results to 18 used fields...`)。
   - F3-40: `e3ffc6e` (`docs: sync TASK_STATE F3-39 + T47`)。
-  - F3-41 (Current Rollback Anchor): `HEAD` (Git Tag `v1.1.0`) | Dirty Tree Status: Clean (仅 2 份用户已删除的 doc 文件未暂存)。
+  - F3-41 (Current Rollback Anchor): `c32d17f` (Git Tag `v1.1.0`) | Dirty Tree Status: Clean (仅 2 份用户已删除的 doc 文件未暂存)。
 ## 3. Current Engineering Flow and Impediments
 - Current Impediment / Stop Point: 无阻碍。V1.1 正式版本交付与基线冻结完成。
 - [x] T48: 完成 V1.1 正式版本冻结、Web 成果导出功能与稳定基线归档 -> Git Tag `v1.1.0`。
