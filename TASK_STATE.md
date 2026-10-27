@@ -29,7 +29,8 @@
 - F3 Version Baseline and Rollback Anchor:
   - F3-33: `99f9998` (`docs: sync TASK_STATE — live verification F1-11, T44, F3-33`)。
   - F3-34: `f3da4f1` (`feat: V1.1 Web UI — FastAPI SSE streaming research dashboard`)。
-  - F3-35 (Current Rollback Anchor): `HEAD` | Dirty Tree Status: Clean (仅 2 份用户已删除的 doc 文件未暂存)。
+  - F3-35: `de219b3` (`fix: bridge SSE events from AgentLoop and run sync research in thread pool`)。
+  - F3-36 (Current Rollback Anchor): `5707240` (`docs: document V1.1 Web UI command, features, and 173 test coverage`) | Dirty Tree Status: Clean (仅 2 份用户已删除的 doc 文件未暂存)。
 ## 3. Current Engineering Flow and Impediments
 - Current Impediment / Stop Point: 无阻碍。V1.1 Web UI 构建与事件流桥接完成，173 项测试全绿，待用户在浏览器中验收。
 - [ ] T45: V1.1 Web UI 浏览器端到端验收（启动 web → 输入需求 → SSE 实时观察 → 阅读报告） → 待用户执行。
