@@ -118,6 +118,7 @@ Example: Find three open-source Python AI agents that can search GitHub reposito
 <script>
 let currentTaskId = null;
 let eventSource = null;
+let currentReportMarkdown = '';
 
 async function init(){
   try{
@@ -240,12 +241,23 @@ function handleEvent(evt){
 }
 
 function renderReport(md, budget){
+  currentReportMarkdown = md;
   const area = document.getElementById('report-area');
   area.classList.add('visible');
   
+  // Actions bar at the top of the report
+  let html = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border);">
+      <h2 style="font-size:16px;font-weight:600;">📄 Research Report</h2>
+      <div style="display:flex;gap:8px;">
+        <button id="copy-btn" onclick="copyReport()" class="notranslate" style="background:var(--code-bg);border:1px solid var(--border);color:var(--text);padding:6px 12px;font-size:12px;border-radius:4px;cursor:pointer;">📋 Copy Markdown</button>
+        <button id="download-btn" onclick="downloadReport()" class="notranslate" style="background:#238636;border:none;color:#fff;padding:6px 12px;font-size:12px;border-radius:4px;cursor:pointer;">📥 Export .md</button>
+      </div>
+    </div>
+  `;
+
   // Parse the markdown report into sections
   const lines = md.split('\n');
-  let html = '';
   let inTable = false, inCode = false;
   
   for(let i=0;i<lines.length;i++){
@@ -320,6 +332,31 @@ function renderInline(text){
 }
 
 function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+function copyReport(){
+  if(!currentReportMarkdown) return;
+  navigator.clipboard.writeText(currentReportMarkdown).then(()=>{
+    const btn = document.getElementById('copy-btn');
+    if(!btn) return;
+    const old = btn.textContent;
+    btn.textContent = '✓ Copied!';
+    setTimeout(()=>btn.textContent = old, 2000);
+  });
+}
+
+function downloadReport(){
+  if(!currentReportMarkdown) return;
+  const blob = new Blob([currentReportMarkdown], {type:'text/markdown;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  const filename = (currentTaskId || 'scout_report') + '.md';
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 </script>
 </body>
 </html>

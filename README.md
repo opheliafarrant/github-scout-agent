@@ -137,25 +137,26 @@ github-scout-agent gate-b --dry-run
 ```powershell
 pytest -m "not live_github" --tb=short
 ```
-- **测试通过率**：**173 passed, 1 deselected**（耗时 ~1.2 秒）。
+- **测试通过率**：**176 passed, 1 deselected**（耗时 ~5 秒）。
 - **覆盖范围**：
   - 工具注册、参数 Pydantic 校验与只读 GET 调度；
   - 预算硬性拦截、候选容量满载与非致命降级；
   - 多轮反馈循环、重复调用熔断、协议重试耗尽保护；
-  - OpenAI-compatible Tool Calling 序列化与错误安全映射；
-  - 模型传输层网络异常分类（TLS、Timeout、ConnectError 安全脱敏）；
+  - 搜索响应裁剪（将 GitHub 60+ 字段精简至 18 个核心消费字段，响应预算消耗降低 90%+）；
+  - OpenAI-compatible Tool Calling 序列化、错误安全映射与网络重试退避；
+  - 模型传输层网络异常分类（TLS、Timeout、ConnectError 安全脱敏与重试）；
   - 多语言意图解析、语言元数据过滤与候选证据充足度判定；
-  - FastAPI Web 服务路由、SSE 实时事件流与任务历史存储。
+  - FastAPI Web 服务路由、SSE 实时事件流、任务历史存储与报告导出。
 
 ### 2. 真实多模型端点验证 [E3]
-- **DeepSeek (`deepseek-flash` @ `api.deepseek.com`)**：通过 Gate A 协议预检与真实在线验收（4 次搜索 + 3 次 README + 排除无关平台 + 结构化决策报告）。
+- **DeepSeek (`deepseek-flash` @ `api.deepseek.com`)**：通过 Gate A 协议预检与真实在线验收（CLI 实测与 Web UI 6 轮交互端到端跑通，自动吸收首轮 TLS 握手抖动，四段式对比决策报告）。
 - **Qwen-Max (`qwen-max` @ `maas.qianwenaiapi.com`)**：实测 3 次模型调用、4 次 GitHub GET 请求跑通端到端技术链路，自动检索并针对真实候选抓取 README 补充证据，生成结构化推荐报告。
 
 ---
 
 ## 🌐 Web UI 交互界面 (V1.1)
 
-GitHub Scout Agent 内置了轻量级本地 Web 仪表盘，支持实时 SSE 事件流与结构化报告可视化：
+GitHub Scout Agent 内置了轻量级本地 Web 仪表盘，支持实时 SSE 事件流、结构化报告可视化与一键导出：
 
 ```powershell
 # 启动本地 Web 服务器（默认端口 8080）
@@ -167,9 +168,21 @@ github-scout-agent web --host 127.0.0.1 --port 8080
 
 - **访问地址**：打开浏览器访问 `http://127.0.0.1:8080`。
 - **特性**：
-  - 实时 SSE 进度流：模型调用、工具调用、README 获取、预算消耗状态即时更新；
-  - 决策报告渲染：候选卡片、横向对比表格、证据缺口提醒与预算使用率仪表盘；
-  - 历史任务记录：侧边栏自动留存当次运行的历史调研任务，支持一键切换复查。
+  - **实时 SSE 进度流**：模型调用、工具调用、README 获取、预算消耗状态即时更新，红点显性展示异常原因；
+  - **决策报告渲染**：候选卡片、横向对比表格、证据缺口提醒与预算使用率仪表盘；
+  - **成果保存与导出**：支持 `📋 Copy Markdown` 一键复制完整报告，以及 `📥 Export .md` 一键下载本地 Markdown 文件；
+  - **历史任务记录**：侧边栏自动留存当次运行的历史调研任务，支持一键切换复查；
+  - **防翻译干扰设计**：原生内置 `notranslate` 保护，杜绝浏览器翻译插件篡改按钮状态或卡死 DOM。
+
+---
+
+## 🛡️ 系统安全设计与能力边界
+
+本项目在架构设计上坚持“受限安全环境”原则：
+1. **只读公开边界**：严格限制官方 `api.github.com`、公开仓库、GET-only 请求，不执行任何写操作，不克隆仓库到本地，不执行任何第三方代码；
+2. **速率与凭据隔离**：支持无 Token（60次/小时）与用户只读 Token（5000次/小时）；GitHub Token 和模型 API Key 仅存在于本地环境变量与内存，绝不进入模型上下文、日志、报告或 Git 仓库；
+3. **不可信输入防护**：第三方仓库的 README 与描述均标记为 `untrusted_remote_text`，由 64 KiB 流式截断保护，防止恶意超长文本或注入攻击；
+4. **确定性预算约束**：模型调用轮次、GitHub 请求数、任务耗时、响应字节与采纳候选数均受硬性预算控制器限制，达到边界时自动平滑收敛为最终报告。
 
 ---
 
