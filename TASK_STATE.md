@@ -3,7 +3,7 @@
 ## 1. Task Foundation
 - True Goal: 建立只读、有证据支持的 GitHub Scout Agent，并通过受限 Agent Loop 完成公开仓库候选发现、证据补充、透明对比与可核验推荐报告。
 - Current Stage: S4 验收与归档
-- Active Mainline: V1.1 正式版本冻结与稳定基线归档；Git Tag v1.1.0；176 项测试全绿。
+- Active Mainline: V1.1 正式版本冻结与 GitHub 私有仓库首次部署归档；Git Tag v1.1.0；176 项测试全绿。
 
 ## 2. Frozen Baselines and Inline Evidence
 - F1 Fact Baseline (客观状态与实测结论):
@@ -23,6 +23,7 @@
   - F1-14: 模型网络重试与 Web UI 异常显性化固化：OpenAICompatibleClient 支持 max_retries 指数退避重试；Web UI / CLI 启用 2 次重试吸收握手抖动；前端补齐 task_terminated 红点详情与 notranslate 保护，finally 保障按钮必复位 [E3: 176 passed]。
   - F1-15: V1.1 Web UI 真实端到端验收通过 [E3: DeepSeek + Web 实时流]：实测 Python CLI 选型对比（Click vs Typer vs Fire）；6 轮模型、20 次 GitHub API、8 轮检索排除噪声、3 个 README 深度调查；请求预算边界自动触发平滑 Finalization 收尾；结构化产出四段式对比决策报告。
   - F1-16: V1.1 正式版本能力固化：搜索响应精简至 18 字段使单次搜索预算从 ~50KB 降至 ~3KB；模型请求具备指数退避重试；Web UI 支持 SSE 实时事件流与一键导出 Markdown (.md)；全部 176 项测试通过 [E3: 176 passed]。
+  - F1-17: 远程私有仓库部署完成 [E3]: opheliafarrant/github-scout-agent (Private, default branch `master` @ `8641de5`, tags `v1.0.0` @ `df3b4ce`, `v1.1.0` @ `71802a9`)；零密钥泄露。
 - F2 Decision Baseline (已批准架构与决策边界):
   - F2-01 (D1): CLI 与本地 Web UI (FastAPI+SSE) 双入口；不采用重型框架与桌面端安装包。
   - F2-02 (D2): 严格只读与公开边界；支持无 Token (60次/h) 与用户只读 Token (5000次/h)；Token 不进模型/日志/报告/Git。
@@ -35,7 +36,8 @@
   - F3-40: `e3ffc6e` (`docs: sync TASK_STATE F3-39 + T47`)。
   - F3-41 (Current Rollback Anchor): `c32d17f` (Git Tag `v1.1.0`) | Dirty Tree Status: Clean (仅 2 份用户已删除的 doc 文件未暂存)。
 ## 3. Current Engineering Flow and Impediments
-- Current Impediment / Stop Point: 无阻碍。V1.1 正式版本交付与基线冻结完成。
+- Current Impediment / Stop Point: 无阻碍。V1.1 正式版本交付、基线冻结与 GitHub 私有仓库首次部署全部完成。
+- [x] T49: GitHub 私有仓库首次部署、凭证审计与远程一致性核验完成 -> Remote `origin` @ `opheliafarrant/github-scout-agent` (Private, tags `v1.0.0`, `v1.1.0`)。
 - [x] T48: 完成 V1.1 正式版本冻结、Web 成果导出功能与稳定基线归档 -> Git Tag `v1.1.0`。
 - [x] T47: 搜索响应裁剪（18 消费字段，响应字节降低 90%+）已完成 -> Target Artifact: src/github_scout_agent/github_api.py | Verification: 176 项全绿。
 - [x] T45: V1.1 Web UI 浏览器端到端验收（启动 web → 输入需求 → SSE 实时观察 → 阅读报告）已成功跑通 [E3: Python CLI 选型实测]。
