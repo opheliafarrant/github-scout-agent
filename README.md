@@ -10,7 +10,7 @@
   <img src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg" alt="Python Version">
   <img src="https://img.shields.io/badge/tests-176%20passed-success.svg" alt="Test Status">
   <img src="https://img.shields.io/badge/architecture-Read--Only%20GET%20%7C%20Zero--Execution-brightgreen.svg" alt="Architecture">
-  <img src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0%20(Candidate)-orange.svg" alt="License">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-brightgreen.svg" alt="License"></a>
 </p>
 
 ---
@@ -234,8 +234,10 @@ pytest -m "not live_github" --tb=short
 
 ---
 
-## 📄 开源许可证与依赖说明
+## 📄 开源许可证与社区规范
 
-- **许可证状态**：本项目当前处于私有验证向公开发布过渡阶段，开源许可证正在最终确定中（备选方案包括 **MIT License** 与 **Apache License 2.0**）。
+- **开源许可证**：本项目采用 [Apache License, Version 2.0](LICENSE) 开源许可证。允许自由使用、修改、分发及商业应用，并享有明确的专利授权保护。
 - **第三方依赖兼容性**：项目核心依赖（`httpx`、`pydantic`、`typer`、`fastapi`、`uvicorn`、`pytest`）均采用极宽松的 MIT 或 BSD-3 商业友好许可证，无任何传染性 Copyleft 风险。
-- **贡献与开发规范**：详见 [CONTRIBUTING.md](file:///c:/Users/Ophelia/Desktop/GitHub%20Scout%20Agent/CONTRIBUTING.md)。
+- **版权声明**：Copyright 2026 Ophelia Farrant and contributors。详见 [NOTICE](NOTICE)。
+- **变更日志**：详见 [CHANGELOG.md](CHANGELOG.md)。
+- **贡献与开发规范**：详见 [CONTRIBUTING.md](CONTRIBUTING.md)。

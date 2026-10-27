@@ -9,8 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
-- Standardized project documentation: upgraded `README.md` for V1.1, added `CHANGELOG.md` and `CONTRIBUTING.md`.
-- Calibrated Git commit topology and `TASK_STATE.md` baseline tracking for seamless multi-agent collaboration.
+- **Apache License 2.0**: Formally adopted Apache-2.0 open-source license; added full `LICENSE` text and `NOTICE` file with third-party dependency attributions.
+- **Project Metadata & Packaging**: Configured standard packaging metadata in `pyproject.toml` including Apache-2.0 license, author, keywords, and classifiers.
+- **GitHub Release Materials**: Prepared comprehensive release notes and repository topic metadata in `docs/RELEASE_NOTES_v1.1.0.md`.
+
+### Changed
+- Converted all internal documentation links in `README.md` to clean repository-relative paths.
+- Updated `README.md` header badge to official `Apache-2.0`.
+- Synchronized `TASK_STATE.md` with baseline decision F2-06.
 
 ---
 

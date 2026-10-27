@@ -1,0 +1,12 @@
+GitHub Scout Agent
+Copyright 2026 Ophelia Farrant and contributors
+
+This product includes software developed by Ophelia Farrant and contributors.
+
+This project relies on the following open source third-party libraries:
+- HTTPX (BSD-3-Clause) - Copyright (c) Encode OSS Ltd.
+- Pydantic (MIT) - Copyright (c) 2017 to present Pydantic Services Inc.
+- Typer (MIT) - Copyright (c) 2019 Sebastián Ramírez
+- FastAPI (MIT) - Copyright (c) 2018 Sebastián Ramírez
+- Uvicorn (BSD-3-Clause) - Copyright (c) Encode OSS Ltd.
+- Pytest (MIT) - Copyright (c) 2004 Holger Krekel and others

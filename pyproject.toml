@@ -7,7 +7,31 @@ name = "github-scout-agent"
 version = "1.1.0"
 description = "A read-only, evidence-backed GitHub research agent."
 readme = "README.md"
+license = {text = "Apache-2.0"}
 requires-python = ">=3.11"
+authors = [
+    {name = "Ophelia Farrant"}
+]
+keywords = [
+    "github",
+    "agent",
+    "research-agent",
+    "llm",
+    "fastapi",
+    "cli",
+    "tool-calling",
+    "evidence-backed",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = [
     "httpx>=0.27,<1",
     "pydantic>=2,<3",
