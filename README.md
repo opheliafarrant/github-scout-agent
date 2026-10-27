@@ -137,36 +137,39 @@ github-scout-agent gate-b --dry-run
 ```powershell
 pytest -m "not live_github" --tb=short
 ```
-- **测试通过率**：**158 passed, 1 deselected**（耗时 < 1 秒）。
+- **测试通过率**：**173 passed, 1 deselected**（耗时 ~1.2 秒）。
 - **覆盖范围**：
   - 工具注册、参数 Pydantic 校验与只读 GET 调度；
   - 预算硬性拦截、候选容量满载与非致命降级；
   - 多轮反馈循环、重复调用熔断、协议重试耗尽保护；
   - OpenAI-compatible Tool Calling 序列化与错误安全映射；
   - 模型传输层网络异常分类（TLS、Timeout、ConnectError 安全脱敏）；
-  - 多语言意图解析、语言元数据过滤与候选证据充足度判定。
+  - 多语言意图解析、语言元数据过滤与候选证据充足度判定；
+  - FastAPI Web 服务路由、SSE 实时事件流与任务历史存储。
 
 ### 2. 真实多模型端点验证 [E3]
-- **DeepSeek (`deepseek-flash` @ `api.deepseek.com`)**：通过 Gate A 协议预检与 T35 在线实测验收，成功验证工具描述下发与参数安全解析。
+- **DeepSeek (`deepseek-flash` @ `api.deepseek.com`)**：通过 Gate A 协议预检与真实在线验收（4 次搜索 + 3 次 README + 排除无关平台 + 结构化决策报告）。
 - **Qwen-Max (`qwen-max` @ `maas.qianwenaiapi.com`)**：实测 3 次模型调用、4 次 GitHub GET 请求跑通端到端技术链路，自动检索并针对真实候选抓取 README 补充证据，生成结构化推荐报告。
 
 ---
 
-## 🔮 扩展 Web UI 的接入基础
+## 🌐 Web UI 交互界面 (V1.1)
 
-GitHub Scout Agent 在架构设计之初即完成了展示层与业务内核的完全解耦：
+GitHub Scout Agent 内置了轻量级本地 Web 仪表盘，支持实时 SSE 事件流与结构化报告可视化：
 
-- **业务内核入口**：`src/github_scout_agent/application.py` 中的 `run_research_task()` 是完全无状态、纯 Python 对象的函数入口。
-- **输入**：标准自然语言任务 `task: str` 与装配好的 `OpenAICompatibleClient`、`GitHubRestClient`、`RequestBudget`。
-- **输出**：结构化对象 `AgentRunResult`，内含：
-  - `status`: 最终执行状态（`completed` / `terminated`）；
-  - `termination_reason`: 终止归因（`model_completed` / `model_finalized` / 预算维度）；
-  - `final_text`: 模型的 Markdown 结论；
-  - `tool_results`: 完整的数据与证据快照；
-  - `events`: 结构化时间线事件流（便于前端渲染进度条与调用轨迹）；
-  - `evidence_complete`: 证据充分性布尔标记；
-  - `evidence_gaps`: 缺失证据说明。
-- **Web UI 适配建议**：可使用 **FastAPI** 包装 `run_research_task()` 为 SSE (Server-Sent Events) 流式接口，或者直接通过 **Streamlit** / **Gradio** 在几十行代码内快速构建交互式桌面/Web 界面。
+```powershell
+# 启动本地 Web 服务器（默认端口 8080）
+github-scout-agent web
+
+# 或指定绑定地址与端口
+github-scout-agent web --host 127.0.0.1 --port 8080
+```
+
+- **访问地址**：打开浏览器访问 `http://127.0.0.1:8080`。
+- **特性**：
+  - 实时 SSE 进度流：模型调用、工具调用、README 获取、预算消耗状态即时更新；
+  - 决策报告渲染：候选卡片、横向对比表格、证据缺口提醒与预算使用率仪表盘；
+  - 历史任务记录：侧边栏自动留存当次运行的历史调研任务，支持一键切换复查。
 
 ---
 
