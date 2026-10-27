@@ -126,21 +126,12 @@ class ToolRegistry:
             return True
         if definition is None:
             return True
-        raw_arguments = arguments
-        if isinstance(arguments, str):
-            try:
-                raw_arguments = json.loads(arguments)
-            except json.JSONDecodeError:
-                return True
-        if not isinstance(raw_arguments, dict):
+        # When candidate capacity is full, allow all evidence tools and searches.
+        # Actual acceptance/rejection is handled at the GitHub API boundary via take_candidate_ids.
+        if name in {"get_public_repository", "get_public_readme", "get_repository_license",
+                     "get_repository_languages_and_topics", "search_public_repositories"}:
             return True
-        try:
-            validated = definition.arguments_model.model_validate(raw_arguments)
-        except ValidationError:
-            return True
-        values = validated.model_dump()
-        identity = f"{values['owner']}/{values['repo']}"
-        return client.budget.is_candidate_accepted(identity)
+        return False
 
     def dispatch(self, name: str, arguments: str | dict[str, Any]) -> ToolResult:
         definition = self._definitions.get(name)

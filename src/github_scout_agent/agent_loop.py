@@ -104,12 +104,7 @@ class AgentLoop:
                 and (
                     self._research_budget_boundary_reached()
                     or self._github_budget_boundary_reached()
-                    or self.budget.candidates_full
-                )
-                and (
-                    self._evidence_complete(tool_results, executed_calls)[0]
-                    or self._research_budget_boundary_reached()
-                    or self._github_budget_boundary_reached()
+                    or self._evidence_complete(tool_results, executed_calls)[0]
                 )
             ):
                 finalization_done = True
@@ -152,6 +147,20 @@ class AgentLoop:
             messages.append(response.as_message())
             if not response.tool_calls:
                 final_text = response.content
+                evidence_ok, evidence_gaps = self._evidence_complete(tool_results, executed_calls)
+                if (
+                    not finalization_done
+                    and self.config.finalization_reserve_calls > 0
+                    and self._finalization_call_available()
+                    and not evidence_ok
+                ):
+                    prompt = (
+                        "The evidence is incomplete: " + "; ".join(evidence_gaps) + ". "
+                        "Continue to gather the missing evidence before producing a recommendation."
+                    )
+                    messages.append(AgentMessage(role="user", content=prompt))
+                    self.events.emit("evidence_incomplete_continue", gaps=evidence_gaps)
+                    continue
                 termination_reason = "model_completed"
                 self.events.emit("task_completed", reason=termination_reason)
                 return self._result("completed", termination_reason, final_text, messages, tool_results)
@@ -240,12 +249,7 @@ class AgentLoop:
             self.budget.check_task_time()
         except BudgetExceeded as exc:
             return self._blocked_result(call, exc.dimension, str(exc))
-        if call.name == "search_public_repositories" and self.budget.candidates_full:
-            return self._blocked_result(
-                call,
-                "candidate_capacity_full",
-                "candidate capacity is full; search for new candidates is blocked, but accepted-candidate evidence follow-up remains allowed",
-            )
+
         if not self.tools.candidate_access_allowed(call.name, call.arguments):
             return self._blocked_result(
                 call,
@@ -280,8 +284,6 @@ class AgentLoop:
     ) -> tuple[ToolResult, bool]:
         """Dispatch one call, stopping a batch before a known request overrun."""
 
-        if call.name == "search_public_repositories" and self.budget.candidates_full:
-            return self._dispatch_call(call), False
         if not self.tools.candidate_access_allowed(call.name, call.arguments):
             return self._dispatch_call(call), False
 

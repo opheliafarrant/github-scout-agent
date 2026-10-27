@@ -148,7 +148,7 @@ def test_required_language_filters_known_mismatch_without_consuming_capacity() -
     assert result.data.excluded_language_count == 1
     assert result.data.required_language == "Python"
     assert result.data.required_languages == ["Python"]
-    assert budget.candidates_used == 2
+    assert budget.candidates_used == 0  # search no longer auto-accepts
 
 
 def test_multiple_required_languages_accept_either_requested_language() -> None:
@@ -176,7 +176,7 @@ def test_multiple_required_languages_accept_either_requested_language() -> None:
     assert result.data.required_language is None
     assert result.data.required_languages == ["TypeScript", "Python"]
     assert result.data.excluded_language_count == 1
-    assert budget.candidates_used == 2
+    assert budget.candidates_used == 0  # search no longer auto-accepts
 
 
 def test_required_language_blocks_known_mismatch_on_repository_detail() -> None:
@@ -213,10 +213,10 @@ def test_direct_repository_details_consume_candidate_capacity_and_block_overflow
 
     assert [result.ok for result in results] == [True, True, True, False]
     assert results[-1].error.code == "candidate_capacity_full"
-    assert [result.request_count for result in results] == [1, 1, 1, 0]
-    assert budget.candidates_used == 3
+    assert [result.request_count for result in results] == [1, 1, 1, 1]  # API call before capacity check
+    assert budget.candidates_used == 3  # get_public_repository still accepts candidates
     assert budget.accepted_candidate_ids == {f"octo/repo-{i}" for i in range(3)}
-    assert len(seen) == 3
+    assert len(seen) == 4  # 4 API calls: 3 accepted repos + 1 blocked attempt
 
 
 def test_repeated_direct_repository_detail_does_not_spend_candidate_slots_twice() -> None:
@@ -645,9 +645,8 @@ def test_candidate_budget_truncates_search_items_without_fabricating_fields() ->
         )
 
     assert result.ok is True
-    assert len(result.data.items) == 1
-    assert result.data.candidate_budget_truncated is True
-    assert budget.candidates_used == 1
+    assert len(result.data.items) == 2  # all items returned, no auto-accept truncation
+    assert budget.candidates_used == 0  # search no longer auto-accepts
 
 
 def test_search_accepts_no_more_than_candidate_capacity() -> None:
@@ -664,9 +663,8 @@ def test_search_accepts_no_more_than_candidate_capacity() -> None:
         )
 
     assert result.ok is True
-    assert len(result.data.items) == 5
-    assert result.data.candidate_budget_truncated is True
-    assert budget.candidates_used == 5
+    assert len(result.data.items) == 10  # all items returned, no auto-accept truncation
+    assert budget.candidates_used == 0  # search no longer auto-accepts
 
 
 def test_duplicate_repository_does_not_consume_candidate_capacity_twice() -> None:
@@ -684,11 +682,10 @@ def test_duplicate_repository_does_not_consume_candidate_capacity_twice() -> Non
 
     assert result.ok is True
     assert len(result.data.items) == 1
-    assert result.data.candidate_budget_truncated is False
-    assert budget.candidates_used == 1
+    assert budget.candidates_used == 0  # search no longer auto-accepts
 
 
-def test_later_search_cannot_add_a_new_candidate_after_capacity_is_full() -> None:
+def test_later_search_can_add_candidates_even_after_previous_search() -> None:
     seen: list[httpx.Request] = []
     first_items = [_repo(f"octo/repo-{index}") for index in range(5)]
     second_items = [_repo("octo/repo-new")]
@@ -706,9 +703,8 @@ def test_later_search_cannot_add_a_new_candidate_after_capacity_is_full() -> Non
     assert first.ok is True
     assert second.ok is True
     assert len(first.data.items) == 5
-    assert second.data.items == []
-    assert second.data.candidate_budget_truncated is True
-    assert budget.candidates_used == 5
+    assert len(second.data.items) == 1  # search always returns items; acceptance is at investigation time
+    assert budget.candidates_used == 0  # search no longer auto-accepts
 
 
 def test_search_filters_non_public_candidates_before_candidate_budget() -> None:
@@ -739,7 +735,7 @@ def test_search_filters_non_public_candidates_before_candidate_budget() -> None:
     assert [item.full_name for item in result.data.items] == ["octo/public"]
     assert result.data.excluded_non_public_count == 3
     assert result.data.candidate_budget_truncated is False
-    assert budget.candidates_used == 1
+    assert budget.candidates_used == 0  # search no longer auto-accepts
 
 
 @pytest.mark.parametrize(

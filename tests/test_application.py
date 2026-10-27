@@ -267,7 +267,7 @@ def test_task_language_constraints_reach_production_search(task, expected_langua
     assert [item.language for item in search.unverified_items] == [None]
     assert result.status == "completed"
     assert result.evidence_complete is True
-    assert budget.candidates_used == len(expected_languages)
+    assert budget.candidates_used == 0  # search no longer auto-accepts; acceptance at investigation time
     assert budget.github_requests_used == len(github_requests) == 1
     assert budget.model_calls_used == len(model_requests) == 2
     feedback = next(m for m in model_requests[1]["messages"] if m["role"] == "tool")

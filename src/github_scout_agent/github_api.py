@@ -453,14 +453,14 @@ class GitHubRestClient:
                 else:
                     public_items.append(item)
         candidate_ids = [self._candidate_identity(item) for item in public_items]
-        accepted_ids, truncated = self.budget.take_candidate_ids(
-            [candidate_id for candidate_id in candidate_ids if candidate_id is not None]
+        max_candidates = self.budget.max_candidates
+        truncated = len(public_items) > max_candidates
+        accepted_id_set = set(
+            cid for cid in candidate_ids if cid is not None
         )
-        accepted_id_set = set(accepted_ids)
         items = [
             _normalize_repository(item, source_url, captured_at)
             for item in public_items
-            if self._candidate_identity(item) in accepted_id_set
         ]
         unverified_records = [_normalize_repository(item, source_url, captured_at) for item in unverified_items]
         return SearchResult(
@@ -494,12 +494,6 @@ class GitHubRestClient:
         owner = validate_owner_repo_part(owner, "owner")
         repo = validate_owner_repo_part(repo, "repo")
         requested_identity = f"{owner}/{repo}"
-        if self.budget.candidates_full and not self.budget.is_candidate_accepted(requested_identity):
-            raise GithubApiError(
-                "candidate_capacity_full",
-                "safety",
-                "candidate capacity is full; repository metadata for a new candidate is blocked",
-            )
         payload, source_url, captured_at = self._request_json(f"/repos/{owner}/{repo}")
         if not isinstance(payload, Mapping):
             raise GithubApiError("invalid_repository_payload", "schema", "GitHub repository response is not an object")
@@ -528,6 +522,14 @@ class GitHubRestClient:
     def get_public_readme(self, *, owner: str, repo: str, ref: str | None = None) -> ReadmeEvidence:
         owner = validate_owner_repo_part(owner, "owner")
         repo = validate_owner_repo_part(repo, "repo")
+        requested_identity = f"{owner}/{repo}"
+        accepted, _ = self.budget.take_candidate_ids([requested_identity])
+        if not accepted and self.budget.candidates_full:
+            raise GithubApiError(
+                "candidate_capacity_full",
+                "safety",
+                "candidate capacity is full; README for a new candidate is blocked",
+            )
         params = {"ref": ref} if ref else None
         try:
             payload, source_url, captured_at = self._request_json(
