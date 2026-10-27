@@ -3,7 +3,7 @@
 ## 1. Task Foundation
 - True Goal: 建立只读、有证据支持的 GitHub Scout Agent，并通过受限 Agent Loop 完成公开仓库候选发现、证据补充、透明对比与可核验推荐报告。
 - Current Stage: S4 验收与归档
-- Active Mainline: 模型网络抖动重试容错与 Web UI 异常显性化；176 项测试通过。
+- Active Mainline: V1.1 Web UI 真实浏览器端到端验收成功 (T45 已闭环)；系统稳定归档。
 
 ## 2. Frozen Baselines and Inline Evidence
 - F1 Fact Baseline (客观状态与实测结论):
@@ -21,6 +21,7 @@
   - F1-12: V1.1 Web UI 上线：FastAPI 9 条路由；单页 SPA；web 命令注册成功；实时 SSE 事件流。
   - F1-13: Web UI SSE 流式事件与后台线程桥接固化：run_research_task 暴露 events 参数；SSEEventRecorder 保证脱敏；asyncio.to_thread 解耦同步网络阻塞。
   - F1-14: 模型网络重试与 Web UI 异常显性化固化：OpenAICompatibleClient 支持 max_retries 指数退避重试；Web UI / CLI 启用 2 次重试吸收握手抖动；前端补齐 task_terminated 红点详情与 notranslate 保护，finally 保障按钮必复位 [E3: 176 passed]。
+  - F1-15: V1.1 Web UI 真实端到端验收通过 [E3: DeepSeek + Web 实时流]：实测 Python CLI 选型对比（Click vs Typer vs Fire）；6 轮模型、20 次 GitHub API、8 轮检索排除噪声、3 个 README 深度调查；请求预算边界自动触发平滑 Finalization 收尾；结构化产出四段式对比决策报告。
 - F2 Decision Baseline (已批准架构与决策边界):
   - F2-01 (D1): CLI 与本地 Web UI (FastAPI+SSE) 双入口；不采用重型框架与桌面端安装包。
   - F2-02 (D2): 严格只读与公开边界；支持无 Token (60次/h) 与用户只读 Token (5000次/h)；Token 不进模型/日志/报告/Git。
@@ -28,13 +29,13 @@
   - F2-04 (D4): 聚焦少量技术候选比对、证据收集与透明推荐报告；不执行第三方代码，不承担完整供应链审计。
   - F2-05 (D5): OpenAI-compatible Tool Calling 标准协议适配；不支持 Tool Calling 时明确失败，不采用非结构化正则替代。
 - F3 Version Baseline and Rollback Anchor:
-  - F3-35: `de219b3` (`fix: bridge SSE events from AgentLoop and run sync research in thread pool`)。
   - F3-36: `5707240` (`docs: document V1.1 Web UI command, features, and 173 test coverage`)。
-  - F3-37 (Current Rollback Anchor): `4514e2d` (`fix: retry transient model network errors with backoff and improve Web UI error display`) | Dirty Tree Status: Clean (仅 2 份用户已删除的 doc 文件未暂存)。
+  - F3-37: `4514e2d` (`fix: retry transient model network errors with backoff and improve Web UI error display`)。
+  - F3-38 (Current Rollback Anchor): `HEAD` | Dirty Tree Status: Clean (仅 2 份用户已删除的 doc 文件未暂存)。
 ## 3. Current Engineering Flow and Impediments
-- Current Impediment / Stop Point: 无阻碍。网络重试容错与 Web UI 显性化完成，176 项测试全绿，待用户重新验证。
+- Current Impediment / Stop Point: 无阻碍。CLI 与 Web UI 全双工验收通过，所有主线任务闭环。
+- [x] T45: V1.1 Web UI 浏览器端到端验收（启动 web → 输入需求 → SSE 实时观察 → 阅读报告）已成功跑通 [E3: Python CLI 选型实测]。
 - [x] T46: 完成模型网络抖动重试机制与 Web UI 异常状态显性化 -> Target Artifact: src/ & tests/ | Verification: 176 项 pytest 全通过。
-- [ ] T45: V1.1 Web UI 浏览器端到端验收（启动 web → 输入需求 → SSE 实时观察 → 阅读报告） → 待用户执行。
 - [x] T44: 线上真实端点验收（deepseek-flash + GitHub API） → Target Artifact: 线上运行报告 | Verification: 4 搜索 + 3 README + 1 排除 + 2 条件推荐 + 四段报告。
 - [x] T43: 修复 CLI response_bytes 预算过低导致 README 阶段被跳过 → Target Artifact: src/github_scout_agent/cli.py | Verification: 167 全通过；线上 response_bytes 60KB/256KB。
 - [x] T42: 完成深度证据研究、相关性筛选与完整推荐闭环 -> Target Artifact: src/ & tests/ | Verification: 167 pytest 全部通过，包含核心验收场景端到端测试。
