@@ -1301,3 +1301,56 @@ def test_convergence_priority_policy_in_prompt() -> None:
     policy = model.messages[0][1].content
     assert "Priority rule" in policy
     assert "Do not continue repeatedly searching" in policy
+
+
+def test_investigated_candidates_satisfy_evidence_when_search_pool_exceeds_budget() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/search/repositories":
+            return httpx.Response(
+                200,
+                json={
+                    "total_count": 5,
+                    "items": [
+                        _repo() | {"full_name": f"octo/repo-{i}", "html_url": f"https://github.com/octo/repo-{i}", "language": "Python"}
+                        for i in range(5)
+                    ]
+                },
+                request=request,
+            )
+        if "/readme" in request.url.path:
+            import base64
+            content = "AI agent documentation"
+            return httpx.Response(
+                200,
+                json={"encoding": "base64", "content": base64.b64encode(content.encode()).decode(), "size": len(content)},
+                request=request,
+            )
+        return httpx.Response(404, json={"message": "Not Found"}, request=request)
+
+    responses = [
+        # Turn 1: model searches
+        AssistantResponse(tool_calls=[ToolCall(id="search", name="search_public_repositories", arguments=json.dumps({"query": "python agent"}))]),
+        # Turn 2: model fetches 3 READMEs for the top 3 candidates
+        AssistantResponse(tool_calls=[
+            ToolCall(id="readme-0", name="get_public_readme", arguments=json.dumps({"owner": "octo", "repo": "repo-0"})),
+            ToolCall(id="readme-1", name="get_public_readme", arguments=json.dumps({"owner": "octo", "repo": "repo-1"})),
+            ToolCall(id="readme-2", name="get_public_readme", arguments=json.dumps({"owner": "octo", "repo": "repo-2"})),
+        ]),
+        # Turn 3: model finalizes without being blocked by uninvestigated repo-3 and repo-4
+        AssistantResponse(content="1) Verified Facts: repo-0, repo-1, repo-2 verified via README.\n2) Evidence Gaps: None.\n3) Recommendation: repo-0."),
+    ]
+    mock = ScriptedMockLLM(responses)
+    budget = RequestBudget(max_candidates=3, max_github_requests=10, max_model_calls=5, max_feedback_bytes=20_000)
+    with GitHubRestClient(budget=budget, required_language="Python", transport=httpx.MockTransport(handler), max_retries=0) as client:
+        result = AgentLoop(
+            model=mock,
+            tools=build_github_tool_registry(client),
+            budget=budget,
+            config=AgentLoopConfig(finalization_reserve_calls=1, required_language="Python", require_candidate_readme=True),
+        ).run("find 3 python agents")
+
+    assert result.status == "completed"
+    assert result.termination_reason == "model_finalized"
+    assert result.evidence_complete is True
+    assert result.evidence_gaps == []
+    assert len(result.tool_results) == 4

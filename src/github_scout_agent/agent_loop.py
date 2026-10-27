@@ -100,6 +100,17 @@ class AgentLoop:
             "If a repo does not clearly satisfy the user's requirements, reject it with a specific reason "
             "rather than including it and hoping the user won't notice."
         )
+        policy_lines.append(
+            "Candidate qualification and exclusion: Evaluate whether candidate projects genuinely meet "
+            "the user's core requirements. If a repository has matching keywords but its description or README "
+            "reveals it is an unrelated framework, an adjacent/financial platform, or lacks the required core features, "
+            "explicitly disqualify and exclude it with a specific reason. Do not populate recommendations with popular "
+            "but functionally irrelevant repositories."
+        )
+        policy_lines.append(
+            "Evidence-based comparison: For deep technical selection, verify concrete capabilities, strengths, and "
+            "limitations from actual README documentation and metadata rather than superficial search snippets or Star counts."
+        )
         messages.append(AgentMessage(role="user", content=" ".join(policy_lines)))
         tool_results: list[ToolResult] = []
         repeated_actions: Counter[str] = Counter()
@@ -416,22 +427,31 @@ class AgentLoop:
         required_languages = self._required_languages()
         required_language_keys = {language.casefold() for language in required_languages}
 
-        candidates: dict[str, Any] = {}
+        search_candidates: dict[str, Any] = {}
+        investigated_candidates: dict[str, Any] = {}
         for result in tool_results:
             if not result.ok:
                 continue
             data = result.data
-            records = list(getattr(data, "items", []) or [])
-            if getattr(data, "full_name", None):
-                records.append(data)
-            for record in records:
-                full_name = getattr(record, "full_name", None)
+            for item in getattr(data, "items", []) or []:
+                full_name = getattr(item, "full_name", None)
                 if isinstance(full_name, str):
-                    candidates[full_name.casefold()] = record
+                    search_candidates[full_name.casefold()] = item
+            if getattr(data, "full_name", None):
+                full_name = getattr(data, "full_name", None)
+                if isinstance(full_name, str):
+                    investigated_candidates[full_name.casefold()] = data
 
-        gaps: list[str] = []
-        if not candidates:
+        if not search_candidates and not investigated_candidates:
             return False, ["no candidates discovered yet — broaden the search or try different keywords"]
+
+        target_candidates: dict[str, Any] = dict(investigated_candidates)
+        max_c = self.budget.max_candidates
+        for identity, record in search_candidates.items():
+            if len(target_candidates) >= max_c:
+                break
+            if identity not in target_candidates:
+                target_candidates[identity] = record
 
         readme_attempts: set[str] = set()
         readme_available: set[str] = set()
@@ -444,15 +464,15 @@ class AgentLoop:
             if not isinstance(arguments, dict):
                 continue
             identity = f"{arguments.get('owner')}/{arguments.get('repo')}".casefold()
-            if call.name == "get_public_readme" and identity in candidates:
+            if call.name == "get_public_readme" and identity in target_candidates:
                 readme_attempts.add(identity)
                 if result.ok and getattr(result.data, "status", None) == "available":
                     readme_available.add(identity)
-            if call.name == "get_public_repository" and result.ok and identity in candidates:
+            if call.name == "get_public_repository" and result.ok and identity in target_candidates:
                 language = getattr(result.data, "language", None)
                 if isinstance(language, str) and language.casefold() in required_language_keys:
                     language_verified.add(identity)
-            if call.name == "get_repository_languages_and_topics" and result.ok and identity in candidates:
+            if call.name == "get_repository_languages_and_topics" and result.ok and identity in target_candidates:
                 languages = getattr(result.data, "languages", {}) or {}
                 if any(
                     isinstance(name, str) and name.casefold() in required_language_keys
@@ -460,7 +480,8 @@ class AgentLoop:
                 ):
                     language_verified.add(identity)
 
-        for identity, record in candidates.items():
+        gaps: list[str] = []
+        for identity, record in target_candidates.items():
             if required_languages:
                 language = getattr(record, "language", None)
                 if not (
@@ -489,15 +510,17 @@ class AgentLoop:
             self.events.emit("task_terminated", reason=exc.dimension, budget=self.budget.snapshot())
             return self._result("terminated", exc.dimension, final_text, messages, tool_results)
         prompt_lines = [
-            "Produce the final evidence-constrained comparison and recommendation now.",
-            "Do not call tools. Structure your response in three clearly labeled sections:",
-            "1) Verified Facts — repository metadata and README content retrieved by tools, "
-            "with source URLs;",
-            "2) Evidence Gaps — what was requested but could not be verified;",
-            "3) Recommendation — your judgment based solely on the verified facts above.",
-            "If fewer candidates qualify than requested, recommend only the qualifying ones "
-            "and explain why others were rejected. If no candidates qualify, state this clearly "
-            "with the search evidence, do not fabricate recommendations.",
+            "Produce the final evidence-constrained comparison and recommendation report now.",
+            "Do not call tools. Structure your response in clearly labeled sections:",
+            "1) Verified Facts & Candidate Verification — for each candidate investigated, list the repository full name, "
+            "GitHub URL, verified core capabilities from README/metadata, strengths, and limitations. Clearly indicate its "
+            "qualification verdict: Verified Match, Partial Match, or Excluded (with specific reason for rejection);",
+            "2) Comparison & Trade-offs — compare the qualifying candidates directly on capabilities, architecture, "
+            "and maturity to help the user make an informed technical choice;",
+            "3) Evidence Gaps & Unknowns — document what was requested but could not be verified from available tools or READMEs;",
+            "4) Final Recommendation — your concrete, evidence-backed recommendation for technical adoption. "
+            "If fewer candidates qualify than requested, recommend only qualifying ones and explain why others were excluded. "
+            "If no candidates qualify, state this clearly with the search evidence; do not fabricate recommendations.",
         ]
         if stop_reason == "rate_limited":
             prompt_lines.append(

@@ -19,6 +19,7 @@
   - F1-08: Q1~Q3 深度修复与意图穿透固化（Commit 045b4b0, 2a147eb）：空结果促发更宽泛查询策略（Q1）；Finalization 彻底摆脱空候选提前触发（Q2）；任务明确声明 README/documentation 时强制开启 require_candidate_readme 门控，未查 README 时顶层 Completeness 真实降级为 partial，与模型诚实说明完全同步（Q3）。
   - F1-09: 自适应研究收敛与速率限制优雅降级固化：提示词注入候选优先与收敛引导；连续 2 次 403 rate_limited 快速阻断；具备候选时无论遇到 repeated_action_blocked、速率限制或预算边界均平滑回退至 Finalization，完整保全已收集证据；无候选阻断时准确输出 403 溯因说明；165 项测试全通过。
   - F1-10: 产品级质量修复固化：每次运行均注入核心研究策略（搜索优先→空结果拓广→证据先于推荐），不再依赖 require_candidate_readme 门控；工具描述说明何时使用及返回内容；--require-readme CLI 标志强制 README 证据；Finalize 三段式指令（已验证事实/证据缺口/推荐）；_report_is_complete 要求 accepted_candidate_count > 0，避免纯搜索无调查时误标 complete [E3: 165 passed]。
+  - F1-11: 深度证据研究与完整推荐闭环固化：自然语言意图全面穿透（中英文研究/验证/对比/能力分析关键字自动激活 README 调研）；`_evidence_complete` 对齐目标调查候选容量，消除多余搜索项阻塞收敛死循环；提示词规范候选资格核查与金融/无关框架明确排除；Finalize 产出四段式决策级对比报告；核心验收场景端到端全绿 [E3: 167 passed]。
 - F2 Decision Baseline (已批准架构与决策边界):
   - F2-01 (D1): MVP 采用 CLI 入口；本地 Web UI 为后续阶段；不采用桌面端安装包。
   - F2-02 (D2): 严格只读与公开边界；支持无 Token (60次/h) 与用户只读 Token (5000次/h)；Token 不进模型/日志/报告/Git。
@@ -31,7 +32,8 @@
   - F3-29: 自适应研究收敛与限流熔断提交：`c8b4bde` (`fix: adaptive research convergence, rate limit short-circuiting, and graceful finalization`)。
   - F3-30 (Current Rollback Anchor): `72c431d` (`fix: _report_is_complete requires accepted_candidate_count > 0`) | Dirty Tree Status: Clean (仅 2 份用户已删除的 doc 文件未暂存)。
 ## 3. Current Engineering Flow and Impediments
-- Current Impediment / Stop Point: 无阻碍。自适应收敛交付完成，Completeness 显示对齐修复完成，165 项离线测试全部通过。
+- Current Impediment / Stop Point: 无阻碍；深度证据研究、相关性筛选与完整推荐闭环交付完成，167 项离线测试全部通过。
+- [x] T42: 完成深度证据研究、相关性筛选与完整推荐闭环 -> Target Artifact: src/ & tests/ | Verification: 167 pytest 全部通过，包含核心验收场景端到端测试。
 - [x] T41: 修复 _report_is_complete 纯搜索误标 complete → Target Artifact: src/github_scout_agent/application.py | Verification: 165 全通过；Scenario B 'completeness: partial' 而非 'complete'。
 - [x] T40: 完成自适应研究收敛与速率限制优雅降级 → Target Artifact: src/ & tests/ | Verification: 165 pytest 全部通过，测试覆盖重复操作降级、连续速率限制阻断与成果保全。
 - [x] T39: 完成 Q1~Q3 深度修复与 README 显式意图门控穿透 -> Target Artifact: src/ & tests/ | Verification: 159 pytest 全部通过，模型空搜索重试与 README 未查降级完全一致。
