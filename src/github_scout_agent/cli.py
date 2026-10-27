@@ -52,6 +52,7 @@ def run_command(
     max_github_requests: int = typer.Option(20, "--max-github-requests", help="Maximum GitHub REST GET requests."),
     max_candidates: int = typer.Option(3, "--max-candidates", help="Maximum accepted repository candidates."),
     max_task_seconds: int = typer.Option(180, "--max-task-seconds", help="Maximum task wall-clock seconds (default: 180)."),
+    require_readme: bool = typer.Option(False, "--require-readme", help="Require README evidence for every accepted candidate."),
 ) -> None:
     """Run the real CLI MVP path; requires explicit confirmation."""
 
@@ -81,7 +82,7 @@ def run_command(
         github_token = config.github_token.get_secret_value() if config.github_token else None
         with GitHubRestClient(token=github_token, budget=budget, timeout=15.0, max_retries=0) as github:
             with OpenAICompatibleClient.from_config(config, budget=budget, timeout=45.0) as model:
-                result = run_research_task(task, model=model, github=github, budget=budget)
+                result = run_research_task(task, model=model, github=github, budget=budget, require_readme_override=require_readme if require_readme else None)
         typer.echo(render_mvp_report(task, result))
         typer.echo("\n## Execution events\n" + "\n".join(
             f"- {event.event_type}: {json.dumps(event.details, ensure_ascii=False, sort_keys=True)}"

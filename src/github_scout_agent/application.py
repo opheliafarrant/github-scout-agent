@@ -20,12 +20,18 @@ def run_research_task(
     model: OpenAICompatibleClient,
     github: GitHubRestClient,
     budget: RequestBudget,
+    require_readme_override: bool | None = None,
 ) -> AgentRunResult:
     """Assemble the existing model, fixed tools, and Agent Loop once."""
 
     required_languages = infer_required_languages(task)
     github.required_languages = required_languages
     github.required_language = required_languages[0] if len(required_languages) == 1 else None
+    require_readme = (
+        require_readme_override
+        if require_readme_override is not None
+        else requires_native_tool_calling_evidence(task)
+    )
 
     return AgentLoop(
         model=model,
@@ -34,7 +40,7 @@ def run_research_task(
         config=AgentLoopConfig(
             finalization_reserve_calls=1,
             required_languages=required_languages,
-            require_candidate_readme=requires_native_tool_calling_evidence(task),
+            require_candidate_readme=require_readme,
         ),
     ).run(task)
 
@@ -124,18 +130,8 @@ def _candidate_records(tool_results: Iterable[Any]) -> list[Any]:
 
 
 def _report_is_complete(result: AgentRunResult) -> bool:
-    if result.status != "completed":
-        return False
-    if result.evidence_complete is False:
-        return False
-    incomplete_evidence_codes = {
-        "github_requests_insufficient",
-        "not_executed_before_finalization",
-    }
-    return not any(
-        item.error is not None and item.error.code in incomplete_evidence_codes
-        for item in result.tool_results
-    )
+    """Report 'complete' only when evidence gathering explicitly passes its own check."""
+    return result.status == "completed" and result.evidence_complete is True
 
 
 def render_mvp_report(task: str, result: AgentRunResult) -> str:

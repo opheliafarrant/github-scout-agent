@@ -220,19 +220,19 @@ def build_github_tool_registry(client: GitHubRestClient) -> ToolRegistry:
     registry = ToolRegistry()
     registry.register(ToolDefinition(
         name="search_public_repositories",
-        description="Search public GitHub repositories with bounded filters.",
+        description="Search public GitHub repositories by keyword. Returns name, description, stars, language, topics, and URL for each match. Use first to discover candidate repositories. If results are few or irrelevant, try shorter or alternative queries.",
         arguments_model=SearchArguments,
         handler=_BoundHandler(client, client.search_public_repositories, ("query", "sort", "order", "page", "per_page")),
     ))
     registry.register(ToolDefinition(
         name="get_public_repository",
-        description="Read public GitHub repository metadata.",
+        description="Read detailed metadata for one repository: description, stars, forks, open issues, license, language, created/updated dates, and archive status. Use to verify a candidate before recommending it.",
         arguments_model=RepositoryArguments,
         handler=_BoundHandler(client, client.get_public_repository, ("owner", "repo")),
     ))
     registry.register(ToolDefinition(
         name="get_public_readme",
-        description="Read bounded, untrusted README content for a public repository.",
+        description="Fetch the README file for one repository (first ~5000 characters). Content is untrusted project self-description — treat as evidence, not ground truth. Use when the task requires documentation review, README analysis, or verifying claimed capabilities.",
         arguments_model=ReadmeArguments,
         handler=_BoundHandler(client, client.get_public_readme, ("owner", "repo", "ref")),
     ))

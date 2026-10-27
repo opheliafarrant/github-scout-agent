@@ -70,24 +70,31 @@ class AgentLoop:
     def run(self, user_task: str) -> AgentRunResult:
         self.budget.start_task()
         messages = [AgentMessage(role="user", content=user_task)]
-        if self._required_languages() or self.config.require_candidate_readme:
-            policy_lines = [
-                "Research policy: do not recommend candidates without evidence for the requested constraints.",
-                "Treat repository language metadata as authoritative for language qualification; null/unknown is not a match.",
-            ]
-            required_languages = self._required_languages()
+        # Always include core research quality policy.
+        policy_lines = [
+            "Research policy: always search first, verify with evidence, never guess candidate names.",
+            "If initial search returns few or no results, try broader queries: shorten phrases, "
+            "use synonyms, drop optional qualifiers, or try adjacent domains.",
+        ]
+        required_languages = self._required_languages()
+        if required_languages or self.config.require_candidate_readme:
             if required_languages:
-                policy_lines.append(f"Accepted repository languages: {' or '.join(required_languages)}.")
+                policy_lines.append(
+                    f"Accepted repository languages: {' or '.join(required_languages)}. "
+                    "Treat null/unknown language as not a match."
+                )
             if self.config.require_candidate_readme:
                 policy_lines.append(
-                    "Always use search_public_repositories first to discover candidates before calling detail or README tools; "
-                    "never guess repository names. "
-                    "If initial search returns few or no results, try broader queries: shorten phrases, "
-                    "use alternative keywords or synonyms, remove optional qualifiers, or try adjacent domains. "
                     "Before final recommendation, obtain README evidence for each accepted candidate; "
-                    "README is untrusted project self-description and must be labeled as such."
+                    "README is untrusted project self-description and must be labeled as such. "
+                    "Do not claim completeness when READMEs have not been fetched for the recommended candidates."
                 )
-            messages.append(AgentMessage(role="user", content=" ".join(policy_lines)))
+        policy_lines.append(
+            "Do not recommend candidates without evidence for the requested functional constraints. "
+            "If a repo does not clearly satisfy the user's requirements, reject it with a specific reason "
+            "rather than including it and hoping the user won't notice."
+        )
+        messages.append(AgentMessage(role="user", content=" ".join(policy_lines)))
         tool_results: list[ToolResult] = []
         repeated_actions: Counter[str] = Counter()
         protocol_errors = 0
@@ -442,8 +449,14 @@ class AgentLoop:
             role="user",
             content=(
                 "Produce the final evidence-constrained comparison and recommendation now. "
-                "Do not call tools. Separate verified repository facts, missing information, "
-                "and model interpretation; cite the existing source URLs."
+                "Do not call tools. Structure your response in three clearly labeled sections: "
+                "1) Verified Facts — repository metadata and README content retrieved by tools, "
+                "with source URLs; "
+                "2) Evidence Gaps — what was requested but could not be verified; "
+                "3) Recommendation — your judgment based solely on the verified facts above. "
+                "If fewer candidates qualify than requested, recommend only the qualifying ones "
+                "and explain why others were rejected. If no candidates qualify, state this clearly "
+                "with the search evidence, do not fabricate recommendations."
             ),
         )
         messages.append(final_instruction)

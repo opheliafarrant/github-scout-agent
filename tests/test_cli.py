@@ -200,7 +200,7 @@ def test_run_production_assembly_uses_mock_transports(monkeypatch) -> None:
 def test_run_configurable_budgets(monkeypatch) -> None:
     captured_budget = None
 
-    def fake_run_research_task(task, *, model, github, budget):
+    def fake_run_research_task(task, *, model, github, budget, require_readme_override=None):
         nonlocal captured_budget
         captured_budget = budget
         from github_scout_agent.agent_loop import AgentRunResult
