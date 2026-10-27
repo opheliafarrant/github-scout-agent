@@ -253,7 +253,7 @@ class GitHubRestClient:
         self.request_log: list[dict[str, object]] = []
         headers = {
             "Accept": "application/vnd.github+json",
-            "User-Agent": "github-scout-agent/0.1.0",
+            "User-Agent": "github-scout-agent/1.0.0",
             "X-GitHub-Api-Version": "2022-11-28",
         }
         if token:

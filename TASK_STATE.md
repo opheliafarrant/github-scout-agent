@@ -1,139 +1,38 @@
 # TASK_STATE
 
 ## 1. Task Foundation
-- True Goal: 建立可回退、可测试的 GitHub Scout Agent Python 工程基础和只读工具系统，并按阶段推进受限 Agent Loop 开发。
-- Current Stage: S5 真实在线 MVP 验收与收敛（千问 qwen-max 真实端点验证通过，Bug B1-B4 修复完成并冻结）
-- Active Mainline: 端到端链路完整打通，无已知运行时缺陷，等待用户验收或新功能规划。
+- True Goal: 建立只读、有证据支持的 GitHub Scout Agent，并通过受限 Agent Loop 完成公开仓库候选发现、证据补充、透明对比与可核验推荐报告。
+- Current Stage: S4 验收与归档 / V1.0 稳定版本正式冻结
+- Active Mainline: CLI MVP V1.0 最终收尾与版本冻结完成，交付稳定基线。
 
 ## 2. Frozen Baselines and Inline Evidence
-- F1 Fact Baseline:
+- F1 Fact Baseline (客观状态与实测结论):
   - F1-01: 工作目录为 C:\Users\Ophelia\Desktop\GitHub Scout Agent；已初始化本地 Git 仓库；未配置或推送 GitHub remote。
-  - F1-02: V0.1 和 PRD V0.2 已实际读取；PRD V0.2 是产品基线，V0.1 保留背景、风险和官方资料依据。
-  - F1-03: GitHub、OpenAI API、HTTPX、Typer、Pydantic、pytest 和 Python 官方文档已查阅；动态 API 限制、模型兼容性和依赖版本仍需实施前验证。
-  - F1-04: S3-01 实际环境：Python 3.13.5、pip 25.1.1、Git 2.53.0.windows.3；Windows `py` launcher 不存在，但 `python -m venv` 成功。
-  - F1-05: S3-01 虚拟环境实际依赖：httpx 0.28.1、pydantic 2.14.1、typer 0.27.3、pytest 8.4.2；安装首次因 Windows 临时文件占用失败，无缓存重试成功。
-  - F1-06: S3-01 离线 pytest 实际结果为 6 passed in 0.61s；CLI help、version、config 均返回 exit code 0；未调用真实 GitHub API 或模型 API。
-  - F1-07: S3-02 新增固定工具注册表、GitHub REST GET-only 客户端、Pydantic 数据/证据模型和确定性请求/响应/候选预算；所有网络测试使用 HTTPX MockTransport。
-  - F1-08: S3-02 完整离线 pytest 实际结果为 23 passed in 0.43s；CLI help、version、config 和 compileall 均通过；未调用真实 GitHub API 或模型 API。
-  - F1-09: S3-02-Fix01 完整离线 pytest 实际结果为 35 passed in 0.38s；CLI help、version、config 和 compileall 均通过；所有 HTTP 测试继续使用 MockTransport。
-  - F1-10: Fix01 实际修复四项问题：限流支持 retry-after/x-ratelimit-reset 和安全 fallback；搜索与单仓库严格要求 private=false 且 visibility=public；README 增加 untrusted_remote_text；HTTPX 响应改为有界 stream 读取。
-  - F1-11: S3-03 完整离线 pytest 实际结果为 52 passed in 0.45s；CLI help/version/config/mock-demo、compileall 均通过；未调用真实 GitHub 或模型 API。
-  - F1-12: Mock CLI 实际轨迹：model calls=3；search_public_repositories 调用 2 次；首次空结果后改写查询；最终 model_completed；GitHub requests=2；candidate=1。
-  - F1-13: S3-04-Fix01 完整离线 pytest 实际结果为 58 passed in 0.43s；候选容量满额后已接受 README/许可证补查通过；新候选与未接受候选被阻断；mock-demo、compileall、CLI 回归通过。
-  - F1-14: S4-01 官方文档核验覆盖搜索、仓库、README/Contents、许可证、语言/Topics、认证、细粒度只读权限和限流；当前实现使用固定 api.github.com、GET、Accept 和 API version header。
-  - F1-15: S4-01 显式 live_github 测试无 Token 实际通过：1 passed，6 次 GET，全部 api.github.com；搜索、仓库详情、README、许可证、Languages、Topics 均解析成功；许可证真实状态为 unknown，Languages/Topics 为空但类型正确，仓库公开且未归档。
-  - F1-16: S4-01 Token 模式未执行：当前环境未配置 GITHUB_TOKEN；无权限创建/提升/修改，也未展示任何凭据。默认 pytest 为 58 passed、1 deselected，真实测试不默认运行。
-  - F1-17: S4-02 默认离线 pytest 实际结果为 60 passed、1 deselected；新增 MockTransport 接线测试验证两个场景均通过 Agent Loop，不绕过工具注册表。
-  - F1-18: S4-02 在线 search 场景无 Token：3 模型轮次、2 次 GET（search -> README）、model_completed；repository 场景无 Token：3 模型轮次、2 次 GET（repository -> README）、model_completed；均未调用真实模型 API。
-  - F1-19: S5-01 默认离线 pytest 实际结果为 75 passed、1 deselected；模型适配器 MockTransport 覆盖请求构造、usage、单/多 Tool Calls、错误、响应大小、预算和凭据隔离；未调用真实模型端点。
-  - F1-20: S5-02-P0 已核验 DeepSeek 官方资料：OpenAI Base URL `https://api.deepseek.com`、model `deepseek-flash`、Chat Completions `/chat/completions`、Tool Calls、`tool_choice=auto` 和非思考 `thinking.type=disabled`；Beta strict 需要 `/beta`，本轮不启用。
-  - F1-21: S5-02-P0 官方价格页面当前列出 deepseek-flash 输入/输出按 1M tokens 计费，并区分 cache hit/miss、peak/off-peak；Gate 金额仅为带假设的预算估算，不是扣费保证。
-  - F1-22: S5-02-P0 离线 pytest 实际结果为 76 passed、1 deselected；DeepSeek 候选请求 JSON、thinking disabled、strict 移除、max_tokens、Tool Calls 和错误路径均由 MockTransport 验证；真实模型调用次数为 0。
-  - F1-23: Gate A-P1 默认离线 pytest 实际结果为 95 passed、1 deselected；`gate-a --dry-run` 成功，模型请求 1 次但仅经 MockTransport，GitHub 请求 0 次；多 Tool Call/错误/超限/配置不匹配均无重试。
-  - F1-24: Gate A-P1 使用看似有效的本地 API Key 环境变量运行 dry-run，仍未发送真实请求；输出只记录 Authorization 是否存在，不输出 Key。
-  - F1-25: 正式在线入口使用 `--online --confirm-live` 进行前置校验；Base URL/Model/Thinking/Strict/Max Tokens 目标配置可校验，但当前 `GITHUB_SCOUT_MODEL_API_KEY` 未配置，返回 `missing_api_key`、exit code 1，未创建一次性授权记录、未发送模型或 GitHub 请求。
-  - F1-26: 本轮曾启动 Windows 隐藏输入提示；用户反馈无法交互后已取消进程；真实 DeepSeek 请求 0、真实 GitHub 请求 0、工作树干净。
-  - F1-27: Gate A 一次性授权记录显示真实模型请求 attempted=true、result_code=multiple_tool_calls、result_status=failed；估算费用 ¥0.004979；usage 未持久化，不能编造；真实 GitHub 请求 0、无重试。
-  - F1-28: Gate B-P0 默认离线 pytest 实际结果为 99 passed、1 deselected；dry-run 三轮 Mock 模型、4 次 Mock GitHub GET、3 个唯一候选、4 个 Tool Calls 均完成；真实 DeepSeek/GitHub 请求 0。
-  - F1-29: Gate B `--online --confirm-live` 在缺少本地 API Key 时返回 `missing_api_key`、exit code 1；Gate B 一次性记录未创建；真实 DeepSeek/GitHub 请求 0；Gate A 记录未改变。
-  - F1-30: Gate B 一次性记录显示模型请求 1 次、GitHub 请求 0、结果 `network_error`、估算累计费用 ¥0.34225、actual usage/cost unknown；无自动重试。
-  - F1-31: S5-03 前物理检查确认 CLI 原先没有自然语言生产 `run` 命令，只有 Mock/Gate 入口；这是实际 MVP 接线缺口。
-  - F1-32: S5-03 离线修复后，`run <task>` 必须带 `--confirm-live`；未确认返回 exit code 2 且不联网；Mock 应用装配和证据报告测试通过；默认 pytest 实际结果为 101 passed、1 deselected。
-  - F1-33: T16-P0 静态与离线核验：生产 `run` 使用现有 ModelClient/AgentLoop/ToolRegistry/GitHubClient；真实路径 GitHub max_retries=0；来源报告包含候选 URL、API 来源、缺失项、预算、终止和模型解释分离；默认 pytest 仍为 101 passed、1 deselected。
-  - F1-34: T17 唯一真实运行：模型请求 1 次、GitHub GET 1 次；模型返回 2 个 Tool Calls；首个搜索响应 76091 bytes 超过 65536 response budget，程序以 `response_bytes` 安全终止；无重试、无最终报告、usage/cost unknown。
-  - F1-35: T18-P0 将公开仓库搜索默认/最大 `per_page` 收紧为 5，保留 64 KiB 流式响应保护；离线复现 76 KiB 仍拒绝，小分页正常解析、重复身份和候选容量语义均通过；默认 pytest 实际结果为 104 passed、1 deselected。
-  - F1-36: T19 唯一真实运行：模型请求 4 次、GitHub GET 8 次、候选 3 个；首轮搜索真实返回 3 个公开候选并完成两次 README 补查；后续模型重复搜索/补查，GitHub 预算达到 8/8，程序以 `github_requests` 安全终止；usage/cost unknown，无重试。
-  - F1-37: T20-P0 离线验证：候选容量满额后新搜索不进入网络层；已接受候选 README 补查仍允许；预算快照进入下一轮 tool message；重复容量阻断后安全终止；partial report 明确标记；默认 pytest 实际结果为 108 passed、1 deselected。
-  - F1-38: T21 唯一真实运行：模型请求 3 次、GitHub GET 8 次、候选 3 个；真实搜索返回 IBM/mcp-context-forge、vstorm-co/pydantic-deepagents、schmitech/orbit；README/许可证/Languages/Topics 部分补查完成；GitHub 预算耗尽，输出 `Completeness: partial`，usage/cost unknown，无重试。
-  - F1-39: T22-P0 离线验证：证据充分后预留最后模型轮次；Finalization 使用 `tool_choice=none`；T21-like 重复搜索轨迹不再耗尽 GitHub 请求；Finalization Tool Call 被安全拒绝；默认 pytest 实际结果为 112 passed、1 deselected。
-  - F1-40: T23 唯一真实运行：模型请求 2 次、GitHub GET 8 次、候选 3 个；真实搜索、详情、README、Languages/Topics 部分补查完成；Finalization 未启动，GitHub 预算以 `github_requests` 终止；usage/cost unknown，无重试。
-  - F1-41: T24-P0 离线修复：工具注册表对有效调用预估请求成本，组合 Languages/Topics 按 2 次 GET 计；Agent Loop 在批次内逐项检查剩余 GitHub 预算，事前阻断不足请求，并为未执行 Tool Calls 保留受控 tool message；GitHub 预算达到边界且已有证据时可在预算内进入 `tool_choice=none` Finalization；报告不会把预算跳过的证据标成 complete；默认离线 pytest 实际结果为 118 passed、1 deselected；真实 DeepSeek/GitHub 请求 0。
-  - F1-42: T24-F1 冻结前检查：T24 修改范围与报告一致；`git diff --check`、`python -m pytest -m "not live_github" --tb=short` 和 `python -m compileall -q src tests` 均通过；README 已改为准确说明生产 `run <task> --confirm-live`、默认离线测试、联网限制和真实最终验收未完成；T25 仅完成命令与预算准备，未发真实请求。
-  - F1-43: T25 真实 MVP 在线验收（物理运行日志已固化至 `.scout/t25_live_output.txt`）：在 `$env:NO_PROXY='*'` 直连环境下完成；Status `completed`、Termination `model_finalized`、Completeness `complete`、退出码 0、耗时 11.72 秒；模型调用 3 次、GitHub 公共 GET 2 次、候选 3 个；第 1 轮候选容量阻断第二个搜索调用（requests=0），第 2 轮允许已接受候选详情补查，第 3 轮使用 `tool_choice=none` Finalization；未执行重试或写操作。
-  - F1-44: T26 网络诊断修复：提交 1fd73b49 已增加模型传输异常安全分类，保留 `network_error`/`timeout` 语义，不泄露异常原文、URL 或凭据；离线 pytest 实际结果为 119 passed、1 deselected；此前真实诊断暴露为 `ConnectError`，底层 TLS 错误为 `SSL: UNEXPECTED_EOF_WHILE_READING`，该次诊断模型调用 1 次、GitHub GET 0 次、未重试。
-  - F1-45: S5-Final 离线产品审查：物理运行日志已持久化至 `.scout/t25_live_output.txt`。技术链路上 Tool Message 配对、容量网络前阻断（requests=0）及 `tool_choice=none` 确已验证。但产品质量存在明确证据缺口：静态代码显示搜索归一化未保存 GitHub `language` 字段；2 次 GitHub GET 未调取 README 或 Languages/Topics；候选 `Ambar-Gupta22/corvus` 实际为 C++17 仓库，未达到 PRD F-04/F-05/S-05 的证据充分性要求。综合验收判定为 B（技术链路通过，产品质量部分通过），暂不冻结为 A 级 MVP。
-  - F1-46: T29-P0 离线修复：RepositoryRecord/SearchResult 保留 GitHub `language` 与未知候选状态；明确任务语言时，已知不匹配候选在候选预算前排除，unknown 不冒充目标语言且不消耗有效候选容量；native/function/tool calling 任务要求已接受候选 README 证据后再优先 Finalization；AgentRunResult 记录 `evidence_complete`/`evidence_gaps`，报告不再仅凭 `model_finalized` 标记 complete；离线 pytest 实际结果为 126 passed、1 deselected，compileall 与 diff check 通过；未发真实请求。
-  - F1-47: T29-F1 冻结前检查：T29 修改范围与独立审查一致；README 最小更新为 T25 技术链路通过但产品验收 B、T29 离线 126 passed、下一次 A 级验收需授权；历史报告删除变更未暂存，`.scout`、API Key、T25 原始日志未修改。
-  - F1-48: 当前工作树四项产品质量修复：Go/Swift 英文动词/形容词不再误判语言；明确多语言条件保留全部目标并按 OR 筛选；Usage 的 *_tokens 数值保留，凭据键仍脱敏；直接 get_public_repository 成功结果计入候选预算；成功搜索结果可触发收敛，避免不必要模型轮次。完整离线 pytest 147 passed、1 deselected；compileall、diff check 通过；未发真实请求、未提交。
-  - F1-49: 用户提供 Antigravity 复核结论 PASS WITH NON-BLOCKING NOTES，指出 Go/Swift 介词短语和并列语言漏识别。本轮先复现，再补齐 in go/in swift 及由真实语言名连接的枚举，保留 Go find/Swift and lightweight 的负例；另经生产装配 MockTransport 复现并修复语言匹配集合未随任务更新的问题。完整离线 pytest 157 passed、1 deselected（exit 0），compileall 与 diff check 均 exit 0；用户授权本地提交；没有真实 API 请求。
-  - F1-50: T35 真实在线验收（任务：`run "find small Python agent repositories with native tool calling" --confirm-live`，直连 DeepSeek 与 GitHub，日志已固化至 `.scout/t35_live_output.txt`）：Status `completed`、Termination `model_finalized`、Completeness `partial`（因 README 截断与 404 缺失，证据门槛未虚假标记 complete）；耗时 21.11 秒；模型请求 4 次（4/5）、GitHub GET 7 次（7/8）、候选 3 个（antoinezambelli/forge, axclogo/AxcAgentEngine, mmmayo13/gemma_4_tool_calling，语言均经验证为 Python）；网络前阻断（Search 2 容量阻断 requests=0，get_repository_languages_and_topics 因仅剩 1 GET 请求不足 2 次而在网络前阻断 requests=0）；Finalization 以 `tool_choice=none` 完整输出对比与推荐；Token 统计真实保留且凭据安全脱敏；0 重试、0 写入。
-  - F1-51: B1~B4 与 M1 修复完成（B1 循环闭包默认参数绑定、B2 Callable 类型、B3 tool_registry None 守卫、B4 gate_a dict 纯函数构建、M1 thinking_mode 字面量校验）；预算放宽至 10/20/180 并开放 CLI 命令行参数；提示词时序引导（先搜索后查详情）彻底消除多 Tool Calls 盲目并发拦截；158 离线测试全绿；千问 qwen-max 真实端点实测 3 次模型请求、4 次 GitHub GET 完整跑通端到端 MVP，产生含 README 证据的推荐报告。
-- F2 Decision Baseline:
-  - F2-01 (D1): MVP 采用 CLI；本地 Web UI 后置；Windows 桌面应用不属于 MVP。
-  - F2-02 (D2): 支持无 Token 和用户自配只读 Token；只读公开仓库；不支持私有仓库、账户管理和任何 GitHub 写操作；Token 不进入模型、报告、普通日志或版本控制。
-  - F2-03 (D3): 模型轮次、GitHub 请求次数、总时长、单次返回内容大小、候选数量由确定性程序硬性控制；具体阈值后续实测确定。
-  - F2-04 (D4): MVP 聚焦自然语言技术需求下的少量候选检索、证据补充、比较和可核验推荐报告；不承担完整代码/安全/供应链审计。
-  - F2-05 (D5): 配置 Base URL、API Key、Model；先验收一个真实支持 Tool Calling 的 OpenAI-compatible 端点；不支持 Tool Calling 时明确失败，不采用非结构化命令替代。
+  - F1-02: 运行环境确认：Python 3.13.5、pip 25.1.1、Git 2.53.0；核心依赖 httpx 0.28.1、pydantic 2.14.1、typer 0.27.3、pytest 8.4.2。
+  - F1-03: 五大 GitHub 只读工具固定：`search_public_repositories`、`get_public_repository`、`get_public_readme`、`get_repository_license`、`get_repository_languages_and_topics`，限制官方 `api.github.com`、公开仓库、GET-only 与 64 KiB 流式截断保护。
+  - F1-04: 多模型端点兼容性已实测 [E3]:
+    - DeepSeek (`deepseek-flash` @ `api.deepseek.com`): T35 真实链路在线验收通过，完成多 Tool Calls 预算前阻断与 `tool_choice=none` Finalization 收尾。
+    - Qwen-Max (`qwen-max` @ `maas.qianwenaiapi.com`): 真实链路在线验收通过，3 次模型请求、4 次 GitHub GET 完整跑通，生成逐候选 README 证据分析推荐报告。
+  - F1-05: 离线测试与自动化套件：完整自动化回归 `158 passed, 1 deselected in 0.73s` [E3: pytest]，compileall 零错误，语法与协议全面自洽。
+  - F1-06: 缺陷与时序修复已固化：B1 闭包晚绑定、B2 Callable 类型、B3 None 守卫、B4 Gate A dict 纯函数构建、M1 thinking_mode 字面量校验、P0 提示词时序引导、P0 预算放宽可配。
+- F2 Decision Baseline (已批准架构与决策边界):
+  - F2-01 (D1): MVP 采用 CLI 入口；本地 Web UI 为后续阶段；不采用桌面端安装包。
+  - F2-02 (D2): 严格只读与公开边界；支持无 Token (60次/h) 与用户只读 Token (5000次/h)；Token 不进模型/日志/报告/Git。
+  - F2-03 (D3): 确定性程序预算强约束（模型轮次、GitHub 请求数、任务时长、响应字节、候选数量）；CLI 支持参数动态调优。
+  - F2-04 (D4): 聚焦少量技术候选比对、证据收集与透明推荐报告；不执行第三方代码，不承担完整供应链审计。
+  - F2-05 (D5): OpenAI-compatible Tool Calling 标准协议适配；不支持 Tool Calling 时明确失败，不采用非结构化正则替代。
 - F3 Version Baseline and Rollback Anchor:
-  - F3-01: S3-01 首个本地基线提交：1fd89eacfdf0e9cdef022f705818b9d389c4ad6e (`chore: initialize project foundation`)。
-  - F3-02: S3-02 实施提交：3fef06896bac4df62cade05586f54dbe772d5585 (`feat: add read-only github tool system`)；未执行破坏性回滚操作。
-  - F3-03: S3-02-Fix01 修复提交：6f0bfdfe6233fd22db288d959b02a143cbe42f2d (`fix: harden github tool safety boundaries`)；未执行破坏性回滚操作。
-  - F3-04: S3-03 实施提交：cfd4074bdf6850768758000c2581d306ff38142c (`feat: add constrained offline agent loop`)；未执行破坏性回滚操作。
-  - F3-05: S3-04-Fix01 修复提交：344ccde4f44b4cd06ceb68dab128abbbe61de06f (`fix: keep candidate capacity separate from fatal budgets`)；未执行破坏性回滚操作。
-  - F3-06: S4-01 实施提交：3544b6257c2abc8354d8fae632c26ab56a24c6a2 (`test: verify github public rest integration`)；未配置或推送 remote。
-  - F3-07: S4-02 实施提交：c8bb2d1d72aa71f2836221202a9df655c90f6bbe (`feat: connect mock agent loop to live github rest`)；未配置或推送 remote。
-  - F3-08: S5-01 实施提交：c9461be4252922beb1dbb5835579202fdabb9819 (`feat: add offline openai compatible tool adapter`)；未调用真实模型 API。
-  - F3-09: S5-02-P0 实施提交：c9c34d8180daf12b68b42d85ceb2bcb967cd7999 (`feat: add deepseek offline preflight controls`)；未调用真实模型 API。
-  - F3-10: Gate A-P1 实施提交：1c42f854983b936c89ad5f14a26dd541fd0e3488 (`test: add offline deepseek gate a preflight`)；未调用真实模型 API。
-  - F3-11: Gate A 受控在线入口提交：fabec37eff1a68d1af0a1f87474ba45bf2a51b6b (`feat: add controlled online gate a`)；仅完成前置阻断验证，未调用真实模型 API。
-  - F3-12: S5-03 MVP 运行入口提交：fdb5d7c074b3754f2c0c846c0ed9923e3d2c9fd9 (`feat: add confirmed cli mvp run path`)；仅离线验证，未调用真实模型或 GitHub API。
-  - F3-13: T16-P0 必要修复提交：ba37892c8e98cf0a5292c029f307e012b589e54f (`fix: align mvp run retries and evidence sources`)；未调用真实模型或 GitHub API。
-  - F3-14: T18-P0 修复提交：be8449ecf35e2825fefb8340868f801e3d99ae64 (`fix: bound github search page size`)；未调用真实模型或 GitHub API。
-  - F3-12: Gate B-P0 实施提交：8c618574bbe70ce8169f74ec6af7bd0bce878499 (`test: add offline gate b compatibility chain`)；未调用真实模型或 GitHub API。
-  - F3-13: Gate B 受控在线入口提交：9667636e7048f0ecfd33f26c7787fb3ae8068b73 (`feat: add controlled online gate b`)；仅完成前置阻断验证。
-  - F3-14: Agent usage event 修复提交：89ebd81e5a2a6ecc995bbe72e6f124ffcb8b024d (`fix: record model usage in agent events`)。
-  - F3-15: T19 状态提交：待本次状态提交记录；未修改代码、未重试请求。
-  - F3-15: Gate B 回归测试修复提交：待本次状态提交记录；未新增任何网络请求。
-  - F3-16: T20-P0 修复提交：2761cf8ab58aba8bd0493d55185bf5516eca06af (`fix: converge agent search at candidate capacity`)；未调用真实模型或 GitHub API。
-  - F3-17: T21 状态提交：待本次状态提交记录；未修改代码、未重试请求。
-  - F3-18: T22-P0 修复提交：5cdfd9fcd55cc37ecbe53697d7988f24ad7341df (`fix: finalize agent after sufficient evidence`)；未调用真实模型或 GitHub API。
-- F3-19: T24-F1 本地冻结提交：a29b06ac5c54fb3e4fc94c575d5e820a4383f35c (`fix: finalize agent safely across tool call batches`)；后续 T26 提交基于此版本；未 push、reset、clean。
-- F3-20: T26 网络异常分类提交：1fd73b49bbce3f655fc9b789543833abb8a6bea1 (`fix: safely classify model transport errors`)；修改 model_client.py 与 test_model_client.py；提交时保留用户要求的两份报告删除变更。
-- F3-21: T29-F1 本地冻结提交：`fix: enforce language qualification and evidence-aware finalization`；基于 1fd73b49，最终 SHA 以提交后 `git rev-parse HEAD` 为准；未执行真实请求、reset、clean 或 push。
-- F3-22: 本地冻结提交：99dd6d4cb5501026dbb231c9618c63303ffe5a7c (`fix: resolve bugs B1-B4, relax budgets, add search-first policy`)。
-
-- 本轮冻结锚点：99dd6d4cb5501026dbb231c9618c63303ffe5a7c
+  - F3-22: 修复与预算优化提交：`99dd6d4cb5501026dbb231c9618c63303ffe5a7c` (`fix: resolve bugs B1-B4, relax budgets, add search-first policy`)。
+  - F3-23: 文档状态机同步提交：`5950fa7` (`docs: synchronize TASK_STATE with T36 and commit 99dd6d4`)。
+  - F3-24 (Current Rollback Anchor): Git Tag `v1.0.0` (CLI MVP V1.0 正式发布冻结版本)。
 
 ## 3. Current Engineering Flow and Impediments
-- Current Impediment / Stop Point: 无阻塞；真实在线 MVP 验收通过，端到端完整打通。两份用户要求删除的历史报告保持删除状态未暂存。
-- [x] T36: 完成 B1~B4/M1 修复、预算放宽可配与 qwen-max 真实链路闭环 -> Target Artifact: src/ & tests/ | Verification: 158 pytest 全部通过，真实 MVP 端到端 3 模型轮次 + 4 GitHub GET 闭环，生成详细推荐报告。
-- [x] T35: 完成真实在线 MVP 端到端验收 -> Target Artifact: .scout/t35_live_output.txt | Verification: 物理日志已固化至 `.scout/t35_live_output.txt`；实测 4 次模型请求、7 次 GitHub GET、3 个 Python 候选、Finalization `tool_choice=none`、Status `completed`、Termination `model_finalized`、退出码 0；README 截断与缺失安全降级为 partial，Token 完整记录，安全预算完全闭环。
-- [x] T01: 完成 S0 产品需求分析 -> Target Artifact: docs/GitHub-Scout-Agent-产品需求分析-V0.1.md | Verification: 文件已实际读取；V0.1 保留。
-- [x] T02: 完成 S1 产品需求冻结 -> Target Artifact: docs/GitHub-Scout-Agent-PRD-V0.2.md | Verification: 五项决策、MVP、Agent Loop、只读边界、F/S 验收和 S0-S6 路线已写入；文档一致性检查通过。
-- [x] T03: 完成 S2 技术架构设计 -> Target Artifact: docs/GitHub-Scout-Agent-技术架构设计-V0.1.md | Verification: 总体架构、Agent Loop、工具/API、数据、报告、安全、预算、错误、技术栈、测试和 S3-S5 依赖已写入；文档一致性检查通过；待用户验收。
-- [x] T04: 完成 S3-01 工程初始化与基础验证 -> Target Artifact: .git、.gitignore、pyproject.toml、src/github_scout_agent、tests、README.md | Verification: Python 3.13.5；4 个依赖版本已记录；6 个离线测试通过；CLI help/version/config 通过；基线提交 SHA 已记录。
-- [x] T05: 完成 S3-02 只读工具系统与 Mock 验证 -> Target Artifact: src/github_scout_agent/{budget,github_api,github_models,tool_registry}.py、tests/test_github_tools.py、tests/test_tool_registry.py | Verification: 五项工具可注册/校验/调度；GET-only、固定 host、参数安全、错误分类、重试、响应/候选/请求预算和 Token 边界均有 Mock 测试；23 tests passed。
-- [x] T05-Fix01: 完成 S3-02 安全缺陷修复 -> Target Artifact: src/github_scout_agent/{budget,github_api,github_models}.py、tests/test_github_tools.py | Verification: P1-01/P1-02/P2-01/P2-02 已修复；35 tests passed；未调用真实 GitHub 或模型 API。
-- [x] T06: 完成 S3-03 受限 Agent Loop 与 Mock Tool Calling -> Target Artifact: src/github_scout_agent/{agent_loop,agent_models,mock_llm,events,demo}.py、tests/test_agent_loop.py | Verification: 多轮反馈、多个 Tool Call、协议错误、重复行动、五类预算、事件脱敏和 Mock CLI 演示均已验证；52 tests passed。
-- [x] T06-Fix01: 完成 S3-04 候选容量修复 -> Target Artifact: src/github_scout_agent/{agent_loop,budget,github_api,tool_registry}.py、tests/test_agent_loop.py、tests/test_github_tools.py | Verification: 唯一候选身份、容量非 fatal、已接受候选补查、未接受候选阻断和其他预算终止均已验证；58 tests passed。
-- [x] T07: 完成 S4-01 真实 GitHub REST 只读接口验收 -> Target Artifact: tests/test_live_github.py、src/github_scout_agent/github_api.py、pyproject.toml、README.md | Verification: 显式 live_github 无 Token 测试通过；6 GET、5 类工具路径、公开过滤、缺失许可证、README trust label、来源/抓取字段和 host/method 约束已验证；Token 模式待凭据验证。
-- [x] T08: 完成 S4-02 Mock LLM + 真实 GitHub Agent 闭环 -> Target Artifact: src/github_scout_agent/live_agent_demo.py、src/github_scout_agent/mock_llm.py、tests/test_live_agent_wiring.py、CLI live-agent-demo | Verification: search 与 repository 两场景均真实经过 Agent Loop；各 2 GET、3 Mock 模型轮次、真实来源/缺失状态/预算输出已记录；60 offline tests passed。
-- [x] T09: 完成 S5-01 OpenAI-compatible Tool Calling 适配器 -> Target Artifact: src/github_scout_agent/model_client.py、src/github_scout_agent/agent_models.py、tests/test_model_client.py | Verification: 标准 messages/tools/tool_choice/stream=false、单/多 Tool Calls、tool_call_id、finish_reason、usage、错误/超时/大小预算和凭据隔离均由 MockTransport 验证；75 tests passed。
-- [x] T10-P0: 完成 S5-02-P0 DeepSeek 接入预检 -> Target Artifact: src/github_scout_agent/{model_client,config}.py、tests/test_model_client.py、README.md | Verification: 官方协议、非思考、Beta strict、价格和候选模型已核验；offline 76 tests passed；真实模型请求 0。
-- [x] T10-P1: 完成 Gate A-P1 离线测试入口 -> Target Artifact: src/github_scout_agent/gate_a.py、tests/test_gate_a.py、CLI gate-a | Verification: 固定 DeepSeek 配置、单搜索 Tool Call、严格 zero GitHub requests、脱敏摘要和失败分类均已验证；95 tests passed。
-- [x] T10-P2: 完成 Gate A 受控在线入口与前置校验 -> Target Artifact: src/github_scout_agent/gate_a.py、src/github_scout_agent/cli.py、tests/test_gate_a.py | Verification: `--online --confirm-live` 无 Key 时安全阻断；无自动重试、无 GitHub 调用、无一次性授权记录写入。
-- [x] T11: 完成 Gate A 唯一真实请求 -> Target Artifact: .scout/gate_a_online_authorization.json | Verification: attempted=true；唯一真实请求 1 次；结果 `multiple_tool_calls`；无重试；真实 GitHub 请求 0；Gate A 按单 Tool Call 标准失败。
-- [x] T12-P0: 完成 Gate B 离线兼容性准备 -> Target Artifact: src/github_scout_agent/gate_b.py、src/github_scout_agent/mock_llm.py、tests/test_gate_b.py、CLI gate-b | Verification: 多 Tool Calls、call_id 关联、三轮反馈、候选容量、README trust label、预算和 MockTransport 隔离已验证；98 tests passed；真实请求 0。
-- [x] T13-P0: 完成 Gate B 受控在线入口与前置校验 -> Target Artifact: src/github_scout_agent/gate_b.py、src/github_scout_agent/cli.py | Verification: `--online --confirm-live` 无 Key 时安全返回 `missing_api_key`；Gate B 一次性记录未创建；真实请求 0。
-- [x] T14: 完成 Gate B 唯一在线任务 -> Target Artifact: .scout/gate_b_online_authorization.json | Verification: 模型请求 1 次；network_error；GitHub 请求 0；无重试；Gate B 一次性记录保留。
-- [x] T15-P0: 完成 S5-03 MVP 主线离线收敛 -> Target Artifact: src/github_scout_agent/application.py、src/github_scout_agent/cli.py、tests/test_application.py | Verification: `run <task> --confirm-live` 生产装配存在；Mock 模型/Mock GitHub 通过现有 Agent Loop；证据报告包含来源、缺失、预算、终止和模型解释分离；101 tests passed。
-- [x] T16-P0: 完成最终真实 MVP 端到端验收准备 -> Target Artifact: src/github_scout_agent/application.py、src/github_scout_agent/cli.py、tests/test_application.py | Verification: 生产 run 链路、确认门、预算、GET-only/公开边界、MockTransport 业务闭环、来源报告和离线回归均已核实；未发真实请求。
-- [x] T17: 完成一次性真实 MVP 端到端验收 -> Target Artifact: 生产 `run` 命令、T17 运行输出和预算事件 | Verification: 模型 1 次、GitHub GET 1 次；multiple Tool Calls 已返回但首个搜索响应超限；安全终止；无重试。
-- [x] T18: 完成搜索响应预算适配修复 -> Target Artifact: src/github_scout_agent/{github_api,tool_registry}.py、tests/test_github_tools.py | Verification: 默认搜索 `per_page=5`、模型参数上限 5；76 KiB 反例安全拒绝；小分页解析、候选容量、Agent Mock 闭环回归通过；104 tests passed。
-- [x] T19: 完成一次性真实 MVP 运行 -> Target Artifact: 生产 `run` 输出与预算事件 | Verification: 模型 4 次、GitHub 8 次、候选 3 个；真实搜索与 README 证据部分完成；最终以 `github_requests` 安全终止；无重试。
-- [x] T20: 完成 Agent 收敛与预算终止修复 -> Target Artifact: src/github_scout_agent/{agent_loop,application}.py、tests/test_agent_loop.py、tests/test_application.py | Verification: 候选满额搜索阻断、已接受候选补查、重复阻断、预算快照和 partial report 均通过；108 tests passed。
-- [x] T21: 完成一次性真实 MVP 运行 -> Target Artifact: 生产 `run` 输出与预算事件 | Verification: 模型 3 次、GitHub 8 次、候选 3 个；真实候选和多类证据已取得；最终以 `github_requests` 安全终止；输出 partial report；无重试。
-- [x] T22-P0: 完成 Agent Finalization 收尾机制修复 -> Target Artifact: src/github_scout_agent/{agent_loop,model_client,application}.py、tests/test_agent_loop.py、tests/test_model_client.py、tests/test_application.py | Verification: 证据充分后预留最后模型轮次；`tool_choice=none`；新 Tool Calls 不执行；partial/complete 语义和 T21-like 轨迹均通过；112 tests passed。
-- [x] T23: 完成一次性真实 MVP 运行 -> Target Artifact: 生产 `run` 输出与预算事件 | Verification: 模型 2 次、GitHub 8 次、候选 3 个；真实候选与多类证据部分取得；Finalization 未启动；以 `github_requests` 安全终止；无重试。
-- [x] T24-P0: 完成多 Tool Calls 批次收敛修复 -> Target Artifact: src/github_scout_agent/{agent_loop,budget,tool_registry}.py、src/github_scout_agent/application.py、tests/test_agent_loop.py、tests/test_tool_registry.py、tests/test_application.py、docs/GitHub-Scout-Agent-T24-P0-多ToolCalls批次收敛修复报告.md | Verification: T23-like 批次、预算不足、大量 Tool Calls、GitHub 边界 Finalization、正常研究路径和 partial completeness 均由 MockTransport/离线测试覆盖；不超出 8 次 GitHub GET，Tool Call ID 与 tool message 保持对应；118 passed、1 deselected；未调用真实模型或 GitHub API。
-- [x] T24-F1: 完成 T24 修改冻结检查与 T25 验收准备 -> Target Artifact: README.md、TASK_STATE.md、T24-P0 报告及已审查源码/测试 | Verification: 修改范围无越界；离线 118 passed、1 deselected；compileall 与 diff check 通过；已创建本地冻结提交。
-- [x] T25: 完成一次真实 MVP 技术链路运行，但产品验收为 B -> Target Artifact: .scout/t25_live_output.txt | Verification: 物理日志已固化至 `.scout/t25_live_output.txt`；实测 3 次模型请求、2 次 GitHub GET、3 个候选、Finalization `tool_choice=none`、Status `completed`、Termination `model_finalized`、退出码 0；但逐候选 README、Python 语言和原生 Tool Calling 证据不足，不能判定 A 或冻结 MVP。
-- [x] T26: 完成模型网络异常独立诊断与安全分类 -> Target Artifact: src/github_scout_agent/model_client.py、tests/test_model_client.py | Verification: 一次真实 POST 暴露 `ConnectError` + `SSL: UNEXPECTED_EOF_WHILE_READING`；随后安全分类提交 1fd73b49 已冻结；离线 119 passed、1 deselected；未执行第二次真实请求。
-- [x] T29-P0: 完成产品质量缺陷最小修复 -> Target Artifact: src/github_scout_agent/{github_api,github_models,tool_registry,agent_loop,application}.py、tests/test_github_tools.py、tests/test_agent_loop.py、tests/test_application.py | Verification: T25 C++ 候选语言过滤、unknown 语言不占有效候选容量、三候选 README 证据门槛、证据不足 partial、语言元数据保留和原有安全预算回归均通过；126 passed、1 deselected；未发真实请求；待独立审查。
-- [x] T29-F1: 完成修复冻结检查与下一次验收准备 -> Target Artifact: README.md、TASK_STATE.md、T29-P0 源码与测试 | Verification: 独立审查结论 PASS WITH NON-BLOCKING NOTES；离线 126 passed、1 deselected；compileall 与 diff check 通过；仅精确暂存本轮文件，历史报告删除变更不暂存；已创建本地冻结提交。
-- [x] 完成四项运行与产品质量缺陷离线修复 -> Target Artifact: src/github_scout_agent/{application,events,github_api,github_models,agent_loop}.py 与 tests/{test_application,test_agent_loop,test_github_tools}.py | Verification: 意图碰撞、多语言条件、Usage 脱敏、定向候选计数和搜索后收敛均有回归；147 passed、1 deselected；compileall、diff check 通过；未发真实请求，未提交。
+- Current Impediment / Stop Point: 无阻碍；CLI MVP V1.0 全部技术与业务指标通过，两份历史报告变更按指示保留未暂存删除状态。
+- [x] T37: 完成 GitHub Scout Agent CLI MVP V1.0 最终收尾与版本冻结 -> Target Artifact: README.md, pyproject.toml, src/github_scout_agent/__init__.py, Git Tag `v1.0.0` | Verification: 158 pytest 全部通过，文档与代码完整同步，版本号升级 1.0.0。
+- [x] T36: 完成 B1~B4/M1 修复、预算放宽可配与 qwen-max 真实链路闭环 -> Target Artifact: src/ & tests/ | Verification: 158 passed，真实端点 3 模型轮次 + 4 GitHub GET 跑通。
+- [x] T35: 完成 DeepSeek 真实在线端到端验收 -> Target Artifact: .scout/t35_live_output.txt | Verification: 4 模型请求、7 GitHub GET、3 个 Python 候选收尾。
 
-## 4. Ruled-Out Approaches and Side Items
-- Ruled Out: MVP 不采用 GitHub 写操作、私有仓库、Clone、第三方代码执行、任意 Shell、用户真实文件管理、复杂多 Provider 框架、非结构化伪工具调用、多 Agent、RAG、GraphQL 强制迁移和 Windows 桌面应用；T23 未完成完整业务闭环，原因是当前 Tool Call 集合内 GitHub 预算耗尽，未重试或修改 Gate A/B/T17/T19/T21 记录 | Credentials: Gate A/B/T17/T19/T21/T23 一次性记录、DeepSeek 官方文档/价格页、T20/T22 离线和 T23 真实运行证据 | Revert Scope: None | Retained Net Assets: Gate A/B/T17/T19/T21/T23 记录、T16 生产 run 装配、T18 分页保护、T20 Agent 收敛、T22 Finalization、T23 真实候选/证据和 partial report。
-- P-01: MVP 完成后评估本地 Web UI、更多模型端点和历史报告/本地索引 | Reason for Deferral: 不影响当前 CLI Agent 闭环和安全验收 | Wake-up Timing: S5 MVP 验收后。
-- P-02: T25 逐候选证据完整性复核与搜索语言字段补全 | Reason for Deferral: 已由 T29-P0 完成；保留条目作为历史问题索引 | Wake-up Timing: T29 独立审查后关闭。
+## 4. Ruled-Out Approaches and Parking Lot
+- Ruled Out: MVP 不采用 GitHub 写操作、私有仓库、Git Clone、第三方代码执行、任意 Shell 工具、复杂多 Agent 重型框架、非结构化正则提取。
+- P-01: 评估基于 FastAPI / Streamlit 构建本地 Web UI 交互界面 | Reason for Deferral: 核心 CLI MVP 已稳定解耦，留作后续功能阶段 | Wake-up Timing: V1.0 交付后。
+- P-02: 评估多模型端点自动测速与智能路由切换 | Reason for Deferral: 当前单模型配置稳定支持 DeepSeek/Qwen 等 OpenAI 兼容端点 | Wake-up Timing: 后续模型扩展阶段。
