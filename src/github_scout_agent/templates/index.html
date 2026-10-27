@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GitHub Scout Agent</title>
+<style>
+:root {
+  --bg: #0d1117; --surface: #161b22; --border: #30363d;
+  --text: #c9d1d9; --muted: #8b949e; --accent: #58a6ff;
+  --success: #3fb950; --warn: #d29922; --error: #f85149;
+  --card-bg: #161b22; --code-bg: #0d1117;
+  --radius: 8px; --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh}
+header{background:var(--surface);border-bottom:1px solid var(--border);padding:12px 24px;display:flex;align-items:center;gap:12px}
+header h1{font-size:18px;font-weight:600}
+.badge{padding:2px 8px;border-radius:12px;font-size:11px;font-weight:500}
+.badge-ok{background:#1b3520;color:var(--success)}
+.badge-warn{background:#332b00;color:var(--warn)}
+main{max-width:1200px;margin:0 auto;padding:24px;display:grid;grid-template-columns:280px 1fr;gap:24px}
+aside{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px}
+aside h3{font-size:13px;color:var(--muted);margin-bottom:12px;text-transform:uppercase;letter-spacing:.5px}
+.history-item{padding:8px 10px;border-radius:6px;cursor:pointer;font-size:13px;margin-bottom:4px;border:1px solid transparent}
+.history-item:hover{background:var(--code-bg)}
+.history-item.active{border-color:var(--accent);background:var(--code-bg)}
+.history-item .task{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.history-item .meta{font-size:11px;color:var(--muted);margin-top:2px}
+.content{display:flex;flex-direction:column;gap:20px}
+.input-area{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px}
+.input-area textarea{width:100%;background:var(--code-bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:12px;font:14px var(--font);resize:vertical;min-height:80px;max-height:200px}
+.input-area textarea:focus{outline:none;border-color:var(--accent)}
+.row{display:flex;gap:12px;align-items:center;margin-top:12px;flex-wrap:wrap}
+.row label{font-size:13px;color:var(--muted);white-space:nowrap}
+.row input{width:64px;background:var(--code-bg);border:1px solid var(--border);border-radius:4px;color:var(--text);padding:4px 8px;font:13px var(--font);text-align:center}
+button{background:var(--accent);color:#fff;border:none;border-radius:6px;padding:8px 20px;font:14px var(--font);font-weight:600;cursor:pointer;transition:opacity .15s}
+button:hover{opacity:.85}
+button:disabled{opacity:.4;cursor:not-allowed}
+.event-feed{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;max-height:400px;overflow-y:auto;display:none}
+.event-feed.visible{display:block}
+.event{display:flex;align-items:flex-start;gap:10px;padding:6px 0;font-size:13px;border-bottom:1px solid var(--border)}
+.event:last-child{border-bottom:none}
+.event .dot{width:8px;height:8px;border-radius:50%;margin-top:4px;flex-shrink:0}
+.event .dot.search{background:var(--accent)}
+.event .dot.readme{background:var(--success)}
+.event .dot.model{background:#bc8cff}
+.event .dot.error{background:var(--error)}
+.event .dot.info{background:var(--muted)}
+.event .text{flex:1}
+.event .time{font-size:11px;color:var(--muted);white-space:nowrap}
+.report-area{display:none}
+.report-area.visible{display:block}
+.report-section{margin-bottom:24px}
+.report-section h2{font-size:16px;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px}
+.card{background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);padding:16px}
+.card h3{font-size:15px;margin-bottom:4px}
+.card h3 a{color:var(--accent);text-decoration:none}
+.card h3 a:hover{text-decoration:underline}
+.card .stars{font-size:12px;color:var(--muted)}
+.card .desc{font-size:13px;margin:8px 0;color:var(--muted)}
+.card .fields{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.card .tag{padding:2px 8px;border-radius:12px;font-size:11px}
+.card .tag.lang{background:#1b3520;color:var(--success)}
+.card .tag.license{background:#1a2332;color:var(--accent)}
+.card .tag.archived{background:#332b00;color:var(--warn)}
+.card .verdict{font-size:12px;margin-top:8px;padding:6px 10px;border-radius:4px}
+.card .verdict.match{background:#1b3520;color:var(--success);border:1px solid var(--success)}
+.card .verdict.excluded{background:#3d1a1a;color:var(--error);border:1px solid var(--error)}
+.card .verdict.partial{background:#332b00;color:var(--warn);border:1px solid var(--warn)}
+.gap-list{list-style:none;padding:0}
+.gap-list li{font-size:13px;color:var(--muted);padding:4px 0;border-bottom:1px solid var(--border)}
+.gap-list li:last-child{border-bottom:none}
+.markdown-body{font-size:14px;line-height:1.6}
+.markdown-body h1,.markdown-body h2,.markdown-body h3,.markdown-body h4{margin:16px 0 8px}
+.markdown-body table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13px}
+.markdown-body th,.markdown-body td{border:1px solid var(--border);padding:8px 12px;text-align:left}
+.markdown-body th{background:var(--code-bg)}
+.markdown-body a{color:var(--accent)}
+.markdown-body code{background:var(--code-bg);padding:1px 5px;border-radius:3px;font-size:12px}
+.markdown-body pre{background:var(--code-bg);padding:12px;border-radius:6px;overflow-x:auto;font-size:12px;border:1px solid var(--border)}
+.markdown-body strong{color:#f0f6fc}
+.budget-bar{margin-top:16px;padding:12px;background:var(--code-bg);border-radius:6px;font-size:12px}
+.budget-bar .bar{display:flex;gap:16px;flex-wrap:wrap}
+.budget-bar .item{color:var(--muted)}
+.budget-bar .item b{color:var(--text)}
+</style>
+</head>
+<body>
+<header>
+  <h1>🔍 GitHub Scout Agent</h1>
+  <span class="badge" id="config-badge">checking...</span>
+  <span style="flex:1"></span>
+  <span style="font-size:12px;color:var(--muted)">V1.1</span>
+</header>
+<main>
+<aside>
+  <h3>📋 History</h3>
+  <div id="history-list"><span style="font-size:12px;color:var(--muted)">No tasks yet</span></div>
+</aside>
+<div class="content">
+  <div class="input-area">
+    <textarea id="task-input" placeholder="Describe what you want to find on GitHub...
+Example: Find three open-source Python AI agents that can search GitHub repositories, analyze README files, and recommend projects with evidence."></textarea>
+    <div class="row">
+      <label>Max candidates</label><input id="max-candidates" type="number" value="3" min="1" max="10">
+      <label>Model calls</label><input id="max-model" type="number" value="10" min="1" max="30">
+      <label>GitHub reqs</label><input id="max-gh" type="number" value="20" min="1" max="60">
+      <label>Timeout (s)</label><input id="max-time" type="number" value="180" min="10" max="600">
+      <button id="run-btn" onclick="startTask()">▶ Start Research</button>
+    </div>
+  </div>
+  <div class="event-feed" id="event-feed"></div>
+  <div class="report-area" id="report-area"></div>
+</div>
+</main>
+<script>
+let currentTaskId = null;
+let eventSource = null;
+
+async function init(){
+  try{
+    const r = await fetch('/api/config');
+    const cfg = await r.json();
+    const badge = document.getElementById('config-badge');
+    if(cfg.ready){
+      badge.className='badge badge-ok';
+      badge.textContent = '✓ ' + cfg.model + ' ready';
+    }else{
+      badge.className='badge badge-warn';
+      badge.textContent = '⚠ Not configured';
+    }
+  }catch(e){}
+  loadHistory();
+}
+init();
+
+async function loadHistory(){
+  try{
+    const r = await fetch('/api/history');
+    const items = await r.json();
+    const el = document.getElementById('history-list');
+    if(!items.length){ el.innerHTML='<span style="font-size:12px;color:var(--muted)">No tasks yet</span>'; return; }
+    el.innerHTML = items.map(i=>`
+      <div class="history-item${currentTaskId===i.id?' active':''}" onclick="loadReport('${i.id}')">
+        <div class="task">${esc(i.task.substring(0,60))}</div>
+        <div class="meta">${i.status} · ${i.termination_reason||''}</div>
+      </div>`).join('');
+  }catch(e){}
+}
+
+async function loadReport(id){
+  currentTaskId = id;
+  loadHistory();
+  try{
+    const r = await fetch('/api/report/'+id);
+    const data = await r.json();
+    if(data.report) renderReport(data.report, data.budget);
+  }catch(e){}
+}
+
+async function startTask(){
+  const task = document.getElementById('task-input').value.trim();
+  if(!task) return;
+  const btn = document.getElementById('run-btn');
+  btn.disabled = true; btn.textContent = 'Running...';
+  
+  const feed = document.getElementById('event-feed');
+  feed.classList.add('visible');
+  feed.innerHTML = '';
+  document.getElementById('report-area').classList.remove('visible');
+  
+  const body = {
+    task: task,
+    max_candidates: parseInt(document.getElementById('max-candidates').value)||3,
+    max_model_calls: parseInt(document.getElementById('max-model').value)||10,
+    max_github_requests: parseInt(document.getElementById('max-gh').value)||20,
+    max_task_seconds: parseInt(document.getElementById('max-time').value)||180,
+  };
+
+  try{
+    const r = await fetch('/api/run', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while(true){
+      const {done, value} = await reader.read();
+      if(done) break;
+      buffer += decoder.decode(value, {stream:true});
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop()||'';
+      for(const part of parts){
+        if(!part.trim()) continue;
+        const lines = part.split('\n');
+        let event = '', data = '';
+        for(const line of lines){
+          if(line.startsWith('event: ')) event = line.slice(7);
+          if(line.startsWith('data: ')) data = line.slice(6);
+        }
+        if(event==='event'&&data) handleEvent(JSON.parse(data));
+        if(event==='done'&&data){
+          const d = JSON.parse(data);
+          currentTaskId = d.task_id;
+          if(d.report) renderReport(d.report, d.budget);
+          btn.disabled = false; btn.textContent = '▶ Start Research';
+          loadHistory();
+        }
+        if(event==='error'&&data){
+          feed.innerHTML += '<div class="event"><div class="dot error"></div><div class="text" style="color:var(--error)">'+esc(JSON.parse(data).message)+'</div></div>';
+          btn.disabled = false; btn.textContent = '▶ Start Research';
+        }
+      }
+    }
+  }catch(e){
+    feed.innerHTML += '<div class="event"><div class="dot error"></div><div class="text" style="color:var(--error)">Connection error: '+esc(e.message)+'</div></div>';
+    btn.disabled = false; btn.textContent = '▶ Start Research';
+  }
+}
+
+let eventEls = {};
+function handleEvent(evt){
+  const feed = document.getElementById('event-feed');
+  const t = evt.type;
+  const d = evt.details||{};
+  let icon = 'info', label = t, detail = '';
+  if(t==='task_started'){icon='info';label='Task started';detail='Input: '+(d.input_length||0)+' chars';}
+  else if(t==='model_call_started'){icon='model';label='Model call #'+(d.model_call||'?');}
+  else if(t==='model_call_finished'){icon='model';label='Model response';detail=(d.tool_call_count||0)+' tool calls';}
+  else if(t==='tool_call_requested'){icon=d.tool_name?.includes('readme')?'readme':d.tool_name?.includes('search')?'search':'info';label=d.tool_name||'tool';}
+  else if(t==='tool_finished'){icon=d.ok?'search':'error';label=d.tool_name||'tool';detail=d.ok?'✓':'✗ '+(d.error_code||'');}
+  else if(t==='tool_blocked'){icon='error';label='Blocked: '+d.tool_name;detail=d.error_code||'';}
+  else if(t==='budget_updated'){icon='info';label='Budget';detail='candidates: '+d.accepted_candidate_count+'/'+d.max_candidates+', gh: '+d.github_requests_used+'/'+d.max_github_requests+', model: '+d.model_calls_used+'/'+d.max_model_calls;}
+  else if(t==='finalization_started'){icon='model';label='Finalization';detail=d.stop_reason||'';}
+  else if(t==='evidence_incomplete_continue'){icon='warn';label='Evidence incomplete';detail=(d.gaps||[]).join(', ');}
+  
+  feed.innerHTML += '<div class="event"><div class="dot '+icon+'"></div><div class="text"><b>'+esc(label)+'</b> <span style="color:var(--muted)">'+esc(detail)+'</span></div></div>';
+  feed.scrollTop = feed.scrollHeight;
+}
+
+function renderReport(md, budget){
+  const area = document.getElementById('report-area');
+  area.classList.add('visible');
+  
+  // Parse the markdown report into sections
+  const lines = md.split('\n');
+  let html = '';
+  let inTable = false, inCode = false;
+  
+  for(let i=0;i<lines.length;i++){
+    let line = lines[i];
+    
+    // Skip the initial header lines - extract metadata
+    if(line.startsWith('- Task:')){html+='<div class="report-section"><h2>📝 Task</h2><p style="font-size:14px;color:var(--muted)">'+esc(line.slice(7))+'</p></div>';continue;}
+    if(line.startsWith('- Status:')){
+      const st = line.slice(9).trim();
+      const color = st==='completed'?'var(--success)':'var(--warn)';
+      html+='<div class="report-section"><h2>📊 Status</h2><p style="font-size:14px"><b style="color:'+color+'">'+esc(st)+'</b>';
+      continue;
+    }
+    if(line.startsWith('- Termination:')){html+=' · <span style="color:var(--muted)">'+esc(line.slice(14))+'</span>';continue;}
+    if(line.startsWith('- Completeness:')){
+      const comp = line.slice(15).trim();
+      const color = comp==='complete'?'var(--success)':'var(--warn)';
+      html+=' · Completeness: <b style="color:'+color+'">'+esc(comp)+'</b></p></div>';
+      continue;
+    }
+    if(line.startsWith('# ')&&!line.startsWith('# GitHub')){html+='<div class="report-section"><h2>'+esc(line.slice(2))+'</h2>';continue;}
+    if(line.startsWith('## ')){html+='</div><div class="report-section"><h2>'+esc(line.slice(3))+'</h2>';continue;}
+    if(line.startsWith('### ')){html+='<h3 style="font-size:14px;margin:12px 0 8px">'+esc(line.slice(4))+'</h3>';continue;}
+    if(line.startsWith('#### ')){html+='<h4 style="font-size:13px;margin:10px 0 6px;color:var(--muted)">'+esc(line.slice(5))+'</h4>';continue;}
+    
+    // Table rendering
+    if(line.startsWith('|')&&!inTable){inTable=true;html+='<div style="overflow-x:auto"><table>';}
+    if(inTable){
+      const cells = line.split('|').filter(c=>c.trim());
+      const isSep = cells.every(c=>/^[-: ]+$/.test(c));
+      if(isSep){continue;}
+      html+='<tr>'+cells.map(c=>'<'+'td>'+esc(c.trim())+'</td>').join('')+'</tr>';
+      if(i+1>=lines.length||!lines[i+1].startsWith('|')){inTable=false;html+='</table></div>';}
+      continue;
+    }
+    
+    // Code blocks
+    if(line.startsWith('```')){
+      if(inCode){inCode=false;html+='</pre>';}
+      else{inCode=true;html+='<pre>';}
+      continue;
+    }
+    if(inCode){html+=esc(line)+'\n';continue;}
+    
+    // List items
+    if(line.match(/^\s*-\s/)){html+='<li style="font-size:13px;margin:2px 0 2px 20px;color:var(--muted)">'+renderInline(line.replace(/^\s*-\s/,''))+'</li>';continue;}
+    
+    // Bold, links, code
+    if(line.trim()){html+='<p style="font-size:13px;margin:4px 0;line-height:1.6">'+renderInline(line)+'</p>';}
+  }
+  html += '</div>';
+  
+  // Budget bar
+  if(budget){
+    html += '<div class="budget-bar"><h3 style="font-size:13px;margin-bottom:8px">📈 Budget</h3><div class="bar">';
+    html += '<div class="item">API calls: <b>'+budget.github_requests_used+'/'+budget.max_github_requests+'</b></div>';
+    html += '<div class="item">Model calls: <b>'+budget.model_calls_used+'/'+budget.max_model_calls+'</b></div>';
+    html += '<div class="item">Candidates: <b>'+budget.accepted_candidate_count+'/'+budget.max_candidates+'</b></div>';
+    html += '<div class="item">Response: <b>'+(budget.response_bytes_used/1024).toFixed(0)+'/'+(budget.max_response_bytes/1024).toFixed(0)+' KB</b></div>';
+    html += '</div></div>';
+  }
+  
+  area.innerHTML = html;
+}
+
+function renderInline(text){
+  return esc(text)
+    .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g,'<em>$1</em>')
+    .replace(/`(.+?)`/g,'<code>$1</code>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g,'<a href="$2" target="_blank">$1</a>');
+}
+
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+</script>
+</body>
+</html>

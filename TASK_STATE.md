@@ -3,7 +3,7 @@
 ## 1. Task Foundation
 - True Goal: 建立只读、有证据支持的 GitHub Scout Agent，并通过受限 Agent Loop 完成公开仓库候选发现、证据补充、透明对比与可核验推荐报告。
 - Current Stage: S4 验收与归档
-- Active Mainline: 线上验收通过；3 次 README 获取，2 候选条件推荐，四段式报告。167 项测试通过。
+- Active Mainline: V1.1 Web UI 上线；FastAPI + SSE + 单页应用；167 项测试通过。
 
 ## 2. Frozen Baselines and Inline Evidence
 - F1 Fact Baseline (客观状态与实测结论):
@@ -20,6 +20,7 @@
   - F1-09: 自适应研究收敛与速率限制优雅降级固化：提示词注入候选优先与收敛引导；连续 2 次 403 rate_limited 快速阻断；具备候选时无论遇到 repeated_action_blocked、速率限制或预算边界均平滑回退至 Finalization，完整保全已收集证据；无候选阻断时准确输出 403 溯因说明；165 项测试全通过。
   - F1-10: 产品级质量修复固化：每次运行均注入核心研究策略（搜索优先→空结果拓广→证据先于推荐），不再依赖 require_candidate_readme 门控；工具描述说明何时使用及返回内容；--require-readme CLI 标志强制 README 证据；Finalize 三段式指令（已验证事实/证据缺口/推荐）；_report_is_complete 要求 accepted_candidate_count > 0，避免纯搜索无调查时误标 complete [E3: 165 passed]。
   - F1-11: 线上验收通过 [E3: DeepSeek deepseek-flash 真实端点]：任务含 "readme/evidence/verify/capabilities/compare/analyze" 关键词自动激活 require_candidate_readme；4 次搜索 → 3 次 get_public_readme（修复前 0 次）；排除 LinkedIn 职业匹配工具（金融/无关平台）；两候选条件推荐 + 组合建议；Completeness: partial 与实际证据一致；response_bytes 消耗 60KB/256KB（23%），修复前 189KB/64KB（超限）
+  - F1-12: V1.1 Web UI 上线 [E2: 静态导入 + 路由验证]：FastAPI 9 条路由（/、/api/config、/api/run SSE、/api/history、/api/report/{id}）；单页 SPA (Vanilla JS + Dark Theme)；web 命令注册成功；实时 SSE 事件流。（线上 E3 验收待用户启动 web 后在浏览器中完成）
   - F1-11: 深度证据研究与完整推荐闭环固化：自然语言意图全面穿透（中英文研究/验证/对比/能力分析关键字自动激活 README 调研）；`_evidence_complete` 对齐目标调查候选容量，消除多余搜索项阻塞收敛死循环；提示词规范候选资格核查与金融/无关框架明确排除；Finalize 产出四段式决策级对比报告；核心验收场景端到端全绿 [E3: 167 passed]。
 - F2 Decision Baseline (已批准架构与决策边界):
   - F2-01 (D1): MVP 采用 CLI 入口；本地 Web UI 为后续阶段；不采用桌面端安装包。
@@ -34,9 +35,10 @@
   - F3-30: `72c431d` (`fix: _report_is_complete requires accepted_candidate_count > 0`)。
   - F3-31 (Current Rollback Anchor): `58839a5` (`fix: deep evidence research, candidate exclusion, and complete recommendation loop`) | Dirty Tree Status: Clean (仅 2 份用户已删除的 doc 文件未暂存)。
   - F3-32: `3adacc1` (`fix: increase CLI max_response_bytes 64KB→256KB to prevent premature budget exhaustion before README phase`)。
-  - F3-33 (Current Rollback Anchor): `e3eb542` (`docs: sync TASK_STATE with F3-32 and T43 (CLI response_bytes fix)`) | Dirty Tree Status: Clean (仅 2 份用户已删除的 doc 文件未暂存)。
+  - F3-33 (Current Rollback Anchor): `99f9998` (`docs: sync TASK_STATE — live verification F1-11, T44, F3-33`) | Dirty Tree Status: V1.1 Web UI 未提交文件待暂存。
 ## 3. Current Engineering Flow and Impediments
-- Current Impediment / Stop Point: 无阻碍。全部验收标准通过，线上真实端到端闭环完成。
+- Current Impediment / Stop Point: 无阻碍。V1.1 Web UI 构建完成，待用户在浏览器中验收。
+- [ ] T45: V1.1 Web UI 浏览器端到端验收（启动 web → 输入需求 → SSE 实时观察 → 阅读报告） → 待用户执行。
 - [x] T44: 线上真实端点验收（deepseek-flash + GitHub API） → Target Artifact: 线上运行报告 | Verification: 4 搜索 + 3 README + 1 排除 + 2 条件推荐 + 四段报告。
 - [x] T43: 修复 CLI response_bytes 预算过低导致 README 阶段被跳过 → Target Artifact: src/github_scout_agent/cli.py | Verification: 167 全通过；线上 response_bytes 60KB/256KB。
 - [x] T42: 完成深度证据研究、相关性筛选与完整推荐闭环 -> Target Artifact: src/ & tests/ | Verification: 167 pytest 全部通过，包含核心验收场景端到端测试。

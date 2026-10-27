@@ -44,6 +44,19 @@ def config_command() -> None:
     typer.echo("S3-03 real model and GitHub connections are not enabled by this command.")
 
 
+@app.command("web")
+def web_command(
+    host: str = typer.Option("127.0.0.1", "--host", help="Bind address (default: 127.0.0.1)."),
+    port: int = typer.Option(8080, "--port", help="Port (default: 8080)."),
+) -> None:
+    """Start the local Web UI for interactive GitHub research."""
+
+    from .web_server import start_server
+
+    typer.echo(f"GitHub Scout Agent Web UI → http://{host}:{port}")
+    start_server(host=host, port=port)
+
+
 @app.command("run")
 def run_command(
     task: str = typer.Argument(..., help="Natural-language GitHub research task."),
