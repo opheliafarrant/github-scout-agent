@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field, SecretStr
 from .application import run_research_task, render_mvp_report
 from .budget import RequestBudget
 from .config import AppConfig, load_config, ENV_MODEL_BASE_URL, ENV_MODEL, ENV_MODEL_API_KEY, ENV_MODEL_THINKING_MODE, ENV_MODEL_STRICT_TOOLS
-from .events import AgentEvent
+from .events import AgentEvent, EventRecorder
 from .github_api import GitHubRestClient
 from .model_client import OpenAICompatibleClient
 
@@ -110,22 +110,23 @@ async def _run_and_stream(task_id: str, req: TaskRequest, request: Request) -> A
         max_response_bytes=256 * 1024,
     )
 
+    loop = asyncio.get_running_loop()
     event_queue: asyncio.Queue[AgentEvent | None] = asyncio.Queue()
 
-    class SSEEventRecorder:
-        def emit(self, event_type: str, **details):
-            evt = AgentEvent(sequence=0, event_type=event_type, timestamp=time.monotonic(), details=details)
-            event_queue.put_nowait(evt)
+    class SSEEventRecorder(EventRecorder):
+        def emit(self, event_type: str, **details: object) -> AgentEvent:
+            evt = super().emit(event_type, **details)
+            loop.call_soon_threadsafe(event_queue.put_nowait, evt)
             return evt
 
     events = SSEEventRecorder()
 
-    async def run_agent():
+    def run_agent_sync() -> None:
         try:
             github_token = config.github_token.get_secret_value() if config.github_token else None
             with GitHubRestClient(token=github_token, budget=budget, timeout=15.0, max_retries=0) as github:
                 with OpenAICompatibleClient.from_config(config, budget=budget, timeout=45.0) as model:
-                    result = run_research_task(req.task, model=model, github=github, budget=budget)
+                    result = run_research_task(req.task, model=model, github=github, budget=budget, events=events)
             report = render_mvp_report(req.task, result)
             status = _store.get(task_id)
             if status:
@@ -133,15 +134,15 @@ async def _run_and_stream(task_id: str, req: TaskRequest, request: Request) -> A
                 status.termination_reason = result.termination_reason
                 status.report = report
                 status.budget = result.budget
-            event_queue.put_nowait(None)
         except Exception as exc:
             status = _store.get(task_id)
             if status:
                 status.status = "error"
                 status.termination_reason = str(exc)
-            event_queue.put_nowait(None)
+        finally:
+            loop.call_soon_threadsafe(event_queue.put_nowait, None)
 
-    asyncio.create_task(run_agent())
+    asyncio.create_task(asyncio.to_thread(run_agent_sync))
 
     disconnected = False
     while True:

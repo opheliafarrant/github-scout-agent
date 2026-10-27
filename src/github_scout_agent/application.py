@@ -9,6 +9,7 @@ from typing import Any
 
 from .agent_loop import AgentLoop, AgentLoopConfig, AgentRunResult
 from .budget import RequestBudget
+from .events import EventRecorder
 from .github_api import GitHubRestClient, normalize_language_name
 from .model_client import OpenAICompatibleClient
 from .tool_registry import build_github_tool_registry
@@ -20,6 +21,7 @@ def run_research_task(
     model: OpenAICompatibleClient,
     github: GitHubRestClient,
     budget: RequestBudget,
+    events: EventRecorder | None = None,
     require_readme_override: bool | None = None,
 ) -> AgentRunResult:
     """Assemble the existing model, fixed tools, and Agent Loop once."""
@@ -37,6 +39,7 @@ def run_research_task(
         model=model,
         tools=build_github_tool_registry(github),
         budget=budget,
+        events=events,
         config=AgentLoopConfig(
             finalization_reserve_calls=1,
             required_languages=required_languages,
