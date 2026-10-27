@@ -31,7 +31,7 @@
 - F3 Version Baseline and Rollback Anchor:
   - F3-36: `5707240` (`docs: document V1.1 Web UI command, features, and 173 test coverage`)。
   - F3-37: `4514e2d` (`fix: retry transient model network errors with backoff and improve Web UI error display`)。
-  - F3-38 (Current Rollback Anchor): `HEAD` | Dirty Tree Status: Clean (仅 2 份用户已删除的 doc 文件未暂存)。
+  - F3-38 (Current Rollback Anchor): `16c5957` (`docs: sync TASK_STATE with T45 Web UI live acceptance verification`) | Dirty Tree Status: Clean (仅 2 份用户已删除的 doc 文件未暂存)。
 ## 3. Current Engineering Flow and Impediments
 - Current Impediment / Stop Point: 无阻碍。CLI 与 Web UI 全双工验收通过，所有主线任务闭环。
 - [x] T45: V1.1 Web UI 浏览器端到端验收（启动 web → 输入需求 → SSE 实时观察 → 阅读报告）已成功跑通 [E3: Python CLI 选型实测]。
