@@ -2,8 +2,8 @@
 
 ## 1. Task Foundation
 - True Goal: 建立只读、有证据支持的 GitHub Scout Agent，并通过受限 Agent Loop 完成公开仓库候选发现、证据补充、透明对比与可核验推荐报告。
-- Current Stage: S4 验收与归档 / V1.0 稳定版本正式冻结
-- Active Mainline: CLI MVP V1.0 最终收尾与版本冻结完成，交付稳定基线。
+- Current Stage: S4 验收与归档
+- Active Mainline: 自适应收敛与 Completeness 对齐交付完成；165 项测试通过。
 
 ## 2. Frozen Baselines and Inline Evidence
 - F1 Fact Baseline (客观状态与实测结论):
@@ -18,6 +18,7 @@
   - F1-07: 候选发现与采纳机制完全解耦（Commit 822c616）：搜索结果不再自动锁定候选容量；仅在模型调用详情/README 工具显式调查时才消耗 candidates 配额；新增证据门控拦截模型在证据不足时的过早停步。
   - F1-08: Q1~Q3 深度修复与意图穿透固化（Commit 045b4b0, 2a147eb）：空结果促发更宽泛查询策略（Q1）；Finalization 彻底摆脱空候选提前触发（Q2）；任务明确声明 README/documentation 时强制开启 require_candidate_readme 门控，未查 README 时顶层 Completeness 真实降级为 partial，与模型诚实说明完全同步（Q3）。
   - F1-09: 自适应研究收敛与速率限制优雅降级固化：提示词注入候选优先与收敛引导；连续 2 次 403 rate_limited 快速阻断；具备候选时无论遇到 repeated_action_blocked、速率限制或预算边界均平滑回退至 Finalization，完整保全已收集证据；无候选阻断时准确输出 403 溯因说明；165 项测试全通过。
+  - F1-10: 产品级质量修复固化：每次运行均注入核心研究策略（搜索优先→空结果拓广→证据先于推荐），不再依赖 require_candidate_readme 门控；工具描述说明何时使用及返回内容；--require-readme CLI 标志强制 README 证据；Finalize 三段式指令（已验证事实/证据缺口/推荐）；_report_is_complete 要求 accepted_candidate_count > 0，避免纯搜索无调查时误标 complete [E3: 165 passed]。
 - F2 Decision Baseline (已批准架构与决策边界):
   - F2-01 (D1): MVP 采用 CLI 入口；本地 Web UI 为后续阶段；不采用桌面端安装包。
   - F2-02 (D2): 严格只读与公开边界；支持无 Token (60次/h) 与用户只读 Token (5000次/h)；Token 不进模型/日志/报告/Git。
@@ -25,16 +26,14 @@
   - F2-04 (D4): 聚焦少量技术候选比对、证据收集与透明推荐报告；不执行第三方代码，不承担完整供应链审计。
   - F2-05 (D5): OpenAI-compatible Tool Calling 标准协议适配；不支持 Tool Calling 时明确失败，不采用非结构化正则替代。
 - F3 Version Baseline and Rollback Anchor:
-  - F3-22: 修复与预算优化提交：`99dd6d4cb5501026dbb231c9618c63303ffe5a7c` (`fix: resolve bugs B1-B4, relax budgets, add search-first policy`)。
-  - F3-23: 文档状态机同步提交：`5950fa7` (`docs: synchronize TASK_STATE with T36 and commit 99dd6d4`)。
-  - F3-24 (Current Rollback Anchor): Git Tag `v1.0.0` (CLI MVP V1.0 正式发布冻结版本)。
-  - F3-25: 候选解耦与证据门控提交：`822c616a602007008f2e31420ea75b4c182854d4` (`fix: candidate discovery decoupled from acceptance; evidence-gated model-stop`)。
-  - F3-26: Q1~Q3 提示词拓宽与空候选完整度修复提交：`045b4b035fabd4e47d722700ebe9d637a7e2a89c`。
   - F3-27: README 关键词意图穿透提交：`2a147eb` (`fix: enforce require_candidate_readme on explicit readme and documentation keywords`)。
-
+  - F3-28: 产品级质量修复提交：`5ad1114` (`fix: product quality — always-on policy, evidence-driven completeness, richer tool descriptions`)。
+  - F3-29: 自适应研究收敛与限流熔断提交：`c8b4bde` (`fix: adaptive research convergence, rate limit short-circuiting, and graceful finalization`)。
+  - F3-30 (Current Rollback Anchor): `72c431d` (`fix: _report_is_complete requires accepted_candidate_count > 0`) | Dirty Tree Status: Clean (仅 2 份用户已删除的 doc 文件未暂存)。
 ## 3. Current Engineering Flow and Impediments
-- Current Impediment / Stop Point: 无阻碍；自适应研究收敛与速率限制优雅降级完成，165 项离线测试全部通过，两份历史报告变更按指示保留未暂存删除状态。
-- [x] T40: 完成自适应研究收敛与速率限制优雅降级 -> Target Artifact: src/ & tests/ | Verification: 165 pytest 全部通过，测试覆盖重复操作降级、连续速率限制阻断与成果保全。
+- Current Impediment / Stop Point: 无阻碍。自适应收敛交付完成，Completeness 显示对齐修复完成，165 项离线测试全部通过。
+- [x] T41: 修复 _report_is_complete 纯搜索误标 complete → Target Artifact: src/github_scout_agent/application.py | Verification: 165 全通过；Scenario B 'completeness: partial' 而非 'complete'。
+- [x] T40: 完成自适应研究收敛与速率限制优雅降级 → Target Artifact: src/ & tests/ | Verification: 165 pytest 全部通过，测试覆盖重复操作降级、连续速率限制阻断与成果保全。
 - [x] T39: 完成 Q1~Q3 深度修复与 README 显式意图门控穿透 -> Target Artifact: src/ & tests/ | Verification: 159 pytest 全部通过，模型空搜索重试与 README 未查降级完全一致。
 - [x] T38: 完成候选发现与采纳解耦，并通过坏候选压力测试与 158 项回归测试 -> Target Artifact: src/ & tests/ | Verification: `candidates_used` 在搜索阶段保持 0；空搜索下模型诚实输出 0 推荐，拒绝虚假凑数。
 - [x] T37: 完成 GitHub Scout Agent CLI MVP V1.0 最终收尾与版本冻结 -> Target Artifact: README.md, pyproject.toml, src/github_scout_agent/__init__.py, Git Tag `v1.0.0` | Verification: 158 pytest 全部通过，文档与代码完整同步，版本号升级 1.0.0。
