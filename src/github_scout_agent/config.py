@@ -96,10 +96,20 @@ def load_config(environ: Mapping[str, str] | None = None) -> AppConfig:
         model=_optional_value(source, ENV_MODEL),
         model_api_key=SecretStr(model_api_key) if model_api_key else None,
         github_token=SecretStr(github_token) if github_token else None,
-        thinking_mode=_optional_value(source, ENV_MODEL_THINKING_MODE),
+        thinking_mode=_validate_thinking_mode(_optional_value(source, ENV_MODEL_THINKING_MODE)),
         strict_tools=True if strict_tools is None else strict_tools,
         max_tokens=_optional_int(source, ENV_MODEL_MAX_TOKENS),
     )
+
+
+def _validate_thinking_mode(value: str | None) -> Literal["disabled", "enabled"] | None:
+    """Validate that thinking_mode is a recognized literal value."""
+
+    if value is None:
+        return None
+    if value not in {"disabled", "enabled"}:
+        raise ValueError(f"GITHUB_SCOUT_MODEL_THINKING_MODE must be 'disabled' or 'enabled', got '{value}'")
+    return value  # type: ignore[return-value]
 
 
 def model_configuration_status(config: AppConfig) -> str:

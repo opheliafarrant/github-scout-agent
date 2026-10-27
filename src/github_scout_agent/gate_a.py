@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import math
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 from dataclasses import dataclass
@@ -15,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, SecretStr
 
 from .agent_models import AgentMessage
 from .budget import RequestBudget
-from .config import AppConfig, load_config
+from .config import load_config
 from .github_api import GitHubRestClient
 from .model_client import ModelAdapterError, OpenAICompatibleClient
 from .tool_registry import SearchArguments, build_github_tool_registry
@@ -52,38 +51,45 @@ class GateAResult(BaseModel):
 
 
 def _response_payload(scenario: str) -> dict[str, Any]:
-    valid_call = {
-        "id": "gate-a-call-1",
-        "type": "function",
-        "function": {
-            "name": "search_public_repositories",
-            "arguments": json.dumps(
-                {"query": "Python AI agents native tool calling is:public"}
-            ),
-        },
-    }
+    def _base_call() -> dict[str, Any]:
+        return {
+            "id": "gate-a-call-1",
+            "type": "function",
+            "function": {
+                "name": "search_public_repositories",
+                "arguments": json.dumps(
+                    {"query": "Python AI agents native tool calling is:public"}
+                ),
+            },
+        }
+
     if scenario == "final_text":
         message = {"role": "assistant", "content": "no tool", "tool_calls": []}
     elif scenario == "unknown_tool":
-        valid_call["function"]["name"] = "unknown_tool"
-        message = {"role": "assistant", "content": None, "tool_calls": [valid_call]}
+        call = _base_call()
+        call["function"]["name"] = "unknown_tool"
+        message = {"role": "assistant", "content": None, "tool_calls": [call]}
     elif scenario == "invalid_json":
-        valid_call["function"]["arguments"] = "{invalid"
-        message = {"role": "assistant", "content": None, "tool_calls": [valid_call]}
+        call = _base_call()
+        call["function"]["arguments"] = "{invalid"
+        message = {"role": "assistant", "content": None, "tool_calls": [call]}
     elif scenario == "invalid_schema":
-        valid_call["function"]["arguments"] = json.dumps({"query": "x", "extra": "blocked"})
-        message = {"role": "assistant", "content": None, "tool_calls": [valid_call]}
+        call = _base_call()
+        call["function"]["arguments"] = json.dumps({"query": "x", "extra": "blocked"})
+        message = {"role": "assistant", "content": None, "tool_calls": [call]}
     elif scenario == "missing_id":
-        missing = {key: value for key, value in valid_call.items() if key != "id"}
+        call = _base_call()
+        missing = {key: value for key, value in call.items() if key != "id"}
         message = {"role": "assistant", "content": None, "tool_calls": [missing]}
     elif scenario == "duplicate_id":
-        message = {"role": "assistant", "content": None, "tool_calls": [valid_call, dict(valid_call)]}
+        message = {"role": "assistant", "content": None, "tool_calls": [_base_call(), _base_call()]}
     elif scenario == "multiple_calls":
-        second = dict(valid_call)
-        second["id"] = "gate-a-call-2"
-        message = {"role": "assistant", "content": None, "tool_calls": [valid_call, second]}
+        call1 = _base_call()
+        call2 = _base_call()
+        call2["id"] = "gate-a-call-2"
+        message = {"role": "assistant", "content": None, "tool_calls": [call1, call2]}
     else:
-        message = {"role": "assistant", "content": None, "tool_calls": [valid_call]}
+        message = {"role": "assistant", "content": None, "tool_calls": [_base_call()]}
     return {
         "id": "dry-run-completion",
         "model": "deepseek-flash",
@@ -386,7 +392,7 @@ def run_gate_a_online() -> GateAResult:
         _write_online_state(state_path, authorization, exclusive=True)
     except FileExistsError:
         return _online_blocked("authorization_consumed", "Gate A one-shot authorization is already consumed or indeterminate")
-    except OSError as exc:
+    except OSError:
         return _online_blocked("authorization_record_failed", "unable to persist one-shot authorization record")
 
     attempted = False

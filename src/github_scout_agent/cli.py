@@ -48,6 +48,10 @@ def config_command() -> None:
 def run_command(
     task: str = typer.Argument(..., help="Natural-language GitHub research task."),
     confirm_live: bool = typer.Option(False, "--confirm-live", help="Required before any real model/GitHub request."),
+    max_model_calls: int = typer.Option(10, "--max-model-calls", help="Maximum model completion rounds."),
+    max_github_requests: int = typer.Option(20, "--max-github-requests", help="Maximum GitHub REST GET requests."),
+    max_candidates: int = typer.Option(3, "--max-candidates", help="Maximum accepted repository candidates."),
+    max_task_seconds: int = typer.Option(180, "--max-task-seconds", help="Maximum task wall-clock seconds (default: 180)."),
 ) -> None:
     """Run the real CLI MVP path; requires explicit confirmation."""
 
@@ -67,16 +71,16 @@ def run_command(
             typer.echo("Model configuration is incomplete; no request was made.", err=True)
             raise typer.Exit(code=2)
         budget = RequestBudget(
-            max_model_calls=5,
-            max_github_requests=8,
-            max_candidates=3,
-            max_task_seconds=120,
-            max_feedback_bytes=32 * 1024,
-            max_model_response_bytes=16 * 1024,
+            max_model_calls=max_model_calls,
+            max_github_requests=max_github_requests,
+            max_candidates=max_candidates,
+            max_task_seconds=max_task_seconds,
+            max_feedback_bytes=64 * 1024,
+            max_model_response_bytes=32 * 1024,
         )
         github_token = config.github_token.get_secret_value() if config.github_token else None
         with GitHubRestClient(token=github_token, budget=budget, timeout=15.0, max_retries=0) as github:
-            with OpenAICompatibleClient.from_config(config, budget=budget, timeout=15.0) as model:
+            with OpenAICompatibleClient.from_config(config, budget=budget, timeout=45.0) as model:
                 result = run_research_task(task, model=model, github=github, budget=budget)
         typer.echo(render_mvp_report(task, result))
         typer.echo("\n## Execution events\n" + "\n".join(

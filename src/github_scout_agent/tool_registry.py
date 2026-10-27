@@ -124,6 +124,8 @@ class ToolRegistry:
         client = getattr(definition.handler, "client", None) if definition else None
         if client is None or not client.budget.candidates_full:
             return True
+        if definition is None:
+            return True
         raw_arguments = arguments
         if isinstance(arguments, str):
             try:

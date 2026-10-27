@@ -23,10 +23,10 @@ class RequestBudget:
 
     max_github_requests: int = 20
     max_response_bytes: int = 64 * 1024
-    max_candidates: int = 10
-    max_model_calls: int | None = None
-    max_task_seconds: float | None = None
-    max_feedback_bytes: int | None = None
+    max_candidates: int = 3
+    max_model_calls: int | None = 10
+    max_task_seconds: float | None = 180
+    max_feedback_bytes: int | None = 64 * 1024
     max_model_response_bytes: int | None = 64 * 1024
     clock: Callable[[], float] = time.monotonic
     github_requests_used: int = 0

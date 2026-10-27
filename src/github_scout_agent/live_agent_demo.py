@@ -5,8 +5,6 @@ from __future__ import annotations
 import os
 from typing import Literal
 
-import httpx
-
 from .agent_loop import AgentLoop, AgentRunResult
 from .budget import RequestBudget
 from .github_api import GitHubRestClient

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -39,7 +39,7 @@ def _redact(value: Any, key: str | None = None) -> Any:
 
 
 class EventRecorder:
-    def __init__(self, *, clock: callable = time.monotonic) -> None:
+    def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
         self.clock = clock
         self.events: list[AgentEvent] = []
 

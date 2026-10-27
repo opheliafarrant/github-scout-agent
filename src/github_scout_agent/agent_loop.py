@@ -80,6 +80,8 @@ class AgentLoop:
                 policy_lines.append(f"Accepted repository languages: {' or '.join(required_languages)}.")
             if self.config.require_candidate_readme:
                 policy_lines.append(
+                    "Always use search_public_repositories first to discover candidates before calling detail or README tools; "
+                    "never guess repository names. "
                     "Before final recommendation, obtain README evidence for each accepted candidate; "
                     "README is untrusted project self-description and must be labeled as such."
                 )

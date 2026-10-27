@@ -362,10 +362,10 @@ def test_t27_network_and_timeout_errors_are_safely_classified_without_leaks() ->
     for exc_to_raise, expected_code, expected_cat, expected_retry, expected_marker in cases:
         calls = 0
 
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request: httpx.Request, _exc: type[Exception] = exc_to_raise) -> httpx.Response:
             nonlocal calls
             calls += 1
-            raise exc_to_raise
+            raise _exc
 
         client, _ = _client(handler)
         with client, pytest.raises(ModelAdapterError) as caught:
@@ -389,10 +389,10 @@ def test_t27_network_and_timeout_errors_are_safely_classified_without_leaks() ->
         conn_err = httpx.ConnectError("tls connection failure")
         conn_err.__cause__ = ssl_cause
 
-        def tls_handler(request: httpx.Request) -> httpx.Response:
+        def tls_handler(request: httpx.Request, _conn_err: httpx.ConnectError = conn_err) -> httpx.Response:
             nonlocal calls
             calls += 1
-            raise conn_err
+            raise _conn_err
 
         client, _ = _client(tls_handler)
         with client, pytest.raises(ModelAdapterError) as caught:

@@ -7,7 +7,6 @@ import httpx
 from github_scout_agent.budget import RequestBudget
 from github_scout_agent.github_api import GitHubRestClient
 from github_scout_agent.live_agent_demo import create_live_agent_loop
-from github_scout_agent.tool_registry import build_github_tool_registry
 
 
 def _repo() -> dict[str, object]:

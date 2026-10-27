@@ -195,3 +195,56 @@ def test_run_production_assembly_uses_mock_transports(monkeypatch) -> None:
     assert "octo/cli-demo" in result.stdout
     assert "Evidence reviewed." in result.stdout
     assert model_calls == 2
+
+
+def test_run_configurable_budgets(monkeypatch) -> None:
+    captured_budget = None
+
+    def fake_run_research_task(task, *, model, github, budget):
+        nonlocal captured_budget
+        captured_budget = budget
+        from github_scout_agent.agent_loop import AgentRunResult
+
+        return AgentRunResult(
+            status="completed",
+            termination_reason="model_completed",
+            final_text="done",
+            messages=[],
+            tool_results=[],
+            events=[],
+            budget=budget.snapshot(),
+            evidence_complete=True,
+            evidence_gaps=[],
+        )
+
+    class DummyCtx:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+    monkeypatch.setattr("github_scout_agent.cli.load_config", lambda: AppConfig(
+        model_base_url="https://model.example.test/v1",
+        model="mock-model",
+        model_api_key=SecretStr("mock-key"),
+        thinking_mode="disabled",
+        strict_tools=False,
+        max_tokens=512,
+    ))
+    monkeypatch.setattr("github_scout_agent.application.run_research_task", fake_run_research_task)
+    monkeypatch.setattr("github_scout_agent.github_api.GitHubRestClient", lambda *a, **kw: DummyCtx())
+    monkeypatch.setattr("github_scout_agent.model_client.OpenAICompatibleClient.from_config", lambda config, **kw: DummyCtx())
+
+    result = runner.invoke(app, [
+        "run", "find x", "--confirm-live",
+        "--max-model-calls", "12",
+        "--max-github-requests", "25",
+        "--max-candidates", "5",
+    ])
+    assert result.exit_code == 0
+    assert captured_budget is not None
+    assert captured_budget.max_model_calls == 12
+    assert captured_budget.max_github_requests == 25
+    assert captured_budget.max_candidates == 5
+
