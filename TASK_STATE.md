@@ -30,7 +30,7 @@
 - F3 Version Baseline and Rollback Anchor:
   - F3-35: `de219b3` (`fix: bridge SSE events from AgentLoop and run sync research in thread pool`)。
   - F3-36: `5707240` (`docs: document V1.1 Web UI command, features, and 173 test coverage`)。
-  - F3-37 (Current Rollback Anchor): `HEAD` | Dirty Tree Status: Clean (仅 2 份用户已删除的 doc 文件未暂存)。
+  - F3-37 (Current Rollback Anchor): `4514e2d` (`fix: retry transient model network errors with backoff and improve Web UI error display`) | Dirty Tree Status: Clean (仅 2 份用户已删除的 doc 文件未暂存)。
 ## 3. Current Engineering Flow and Impediments
 - Current Impediment / Stop Point: 无阻碍。网络重试容错与 Web UI 显性化完成，176 项测试全绿，待用户重新验证。
 - [x] T46: 完成模型网络抖动重试机制与 Web UI 异常状态显性化 -> Target Artifact: src/ & tests/ | Verification: 176 项 pytest 全通过。
