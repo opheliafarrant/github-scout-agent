@@ -1,92 +1,134 @@
-# GitHub Scout Agent (CLI MVP V1.0)
+# GitHub Scout Agent
 
-> **A read-only, evidence-backed GitHub research agent.**  
-> 一个只读、有证据支持的 GitHub 开源技术选型与候选调研 Agent。
+<p align="center">
+  <strong>A read-only, evidence-backed GitHub technical research & repository scouting agent.</strong><br>
+  面向技术选型、开源候选调研与技术决策分析的只读证据驱动型自主智能体。
+</p>
 
-用户以自然语言输入技术需求，Agent 自主通过受控循环检索 GitHub 公开候选仓库，补充多维证据（README、License、语言与 Topics、Stars/Forks），进行事实核验与透明对比，最终输出带有真实来源链接与不确定性标注的决策推荐报告。
+<p align="center">
+  <img src="https://img.shields.io/badge/version-v1.1.0-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg" alt="Python Version">
+  <img src="https://img.shields.io/badge/tests-176%20passed-success.svg" alt="Test Status">
+  <img src="https://img.shields.io/badge/architecture-Read--Only%20GET%20%7C%20Zero--Execution-brightgreen.svg" alt="Architecture">
+  <img src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0%20(Candidate)-orange.svg" alt="License">
+</p>
 
 ---
 
-## 🎯 核心定位与安全边界
+## 💡 核心价值与解决的痛点
 
-GitHub Scout Agent 遵循严格的防御性与可核验安全设计：
+在进行架构选型、技术评估或寻找优质开源库时，开发者通常面临以下挑战：
+- **通用大模型的事实幻觉**：直接询问常规 LLM 经常会编造不存在的 GitHub 仓库名称、过时的 API 或虚构的功能特性；
+- **人工调研繁重低效**：需要在 GitHub 逐个搜索、筛选候选、翻阅长篇 README、核实 SPDX 许可证、确认多语言与最近活跃度，再手工汇总整理对比；
+- **决策缺乏真实依据**：许多技术选型报告停留在主观感受，缺乏真实的引用链接与一手文档佐证。
 
-| 维度 | 安全约束与策略 |
+**GitHub Scout Agent** 通过“受限智能体循环 + 真实 GitHub REST API + 严格证据门控”，实现了全自动化的开源调研闭环：
+1. **真实发现**：根据用户自然语言需求（例如 *“寻找三个支持本地私有化部署的 Python RAG 框架”*），自主规划并执行精准关键词搜索与多语言过滤；
+2. **证据调查**：逐一抓取真实候选仓库的元数据、SPDX 许可证与完整 README 文档，提取核心特性、依赖环境与部署要求；
+3. **横向对比**：自动过滤不相关的商业 SaaS 或闭源平台，横向对比切分策略、向量后端、LLM 支持与部署复杂度；
+4. **决策报告**：输出带有真实仓库链接、多维比对表、证据充足度标记（`complete` / `partial`）与最终选型建议的结构化 Markdown 报告。
+
+---
+
+## 🌟 V1.1 核心特性一览
+
+| 模块 | 特性说明 |
 | :--- | :--- |
-| **只读操作** | 严格仅允许 GitHub REST `GET` 请求；禁止任何 `POST`、`PUT`、`PATCH`、`DELETE` 操作；不支持私有仓库与账户管理。 |
-| **零代码执行** | 绝不执行 `git clone`，不拉取完整代码仓库，不执行外部构建脚本，绝不提供任意 Shell 或系统执行工具。 |
-| **域名与宿主锁定** | 网络层严格白名单锁定为官方 `api.github.com`；模型层仅与用户显式配置的 OpenAI 兼容端点通信。 |
-| **凭据绝对隔离** | 支持无 Token 模式与用户自配只读 `GITHUB_TOKEN`；任何 Token 与 API Key 绝不注入模型 Prompt、不输出日志、不进入报告与版本控制。 |
-| **确定性程序预算** | 由程序硬性拦截并控制 5 类预算：模型调用轮次、GitHub 请求数、任务总耗时、响应字节大小、候选仓库数量，防止失控死循环与意外账单。 |
-| **远程文本不可信标记** | 所有远程抓取的 README 文本均标注为 `untrusted_remote_text`，如遇超限则安全截断，且事实证据不足时如实降级标示 `partial`。 |
-| **时序引导 (Search-First)** | 系统级提示词强制模型先检索确定候选，禁止在搜索结果返回前凭空臆造仓库并发抓取详情。 |
+| **🌐 本地 Web 仪表盘** | 内置基于 FastAPI + SSE (Server-Sent Events) 的单页交互界面，毫秒级流式呈现思考过程、API 调用与预算消耗，支持结构化报告一键复制与 Markdown (.md) 导出。 |
+| **⌨️ 功能完备的 CLI 引擎** | 支持生产级实时调研 (`run`)、纯离线 Mock 回路验证 (`mock-demo`)、真实 GitHub API 连通性探活 (`live-agent-demo`) 以及模型协议预检 (`gate-a` / `gate-b`)。 |
+| **🔍 深度证据闭环** | 实施 Search-First 时序引导与证据门控；必须通过 README 调查获得一手证据才可完成决策，严禁仅凭搜索列表主观猜测。 |
+| **⚡ 检索响应裁剪** | 将 GitHub 原始 60+ 字段裁剪至 18 个核心消费字段，单次检索响应字节缩减 90%+（~50KB 降至 ~3KB），大幅节省上下文与预算。 |
+| **🛡️ 确定性预算护栏** | 模型调用轮次、GitHub 请求数、任务总耗时、响应字节与采纳候选数 5 维硬性拦截，杜绝死循环与意外账单，边界触发时平滑收敛为最终报告。 |
+| **🔄 传输层抖动重试** | 针对 OpenAI 兼容端点内置指数退避重试机制（默认 2 次），有效吸收 TLS 握手波动、偶发超时与连接中断。 |
+| **🔒 严格只读与凭证安全** | 仅允许官方 `api.github.com` 的 GET 请求；绝不执行 `git clone`，绝不运行任何第三方代码；所有 API Token 与 Key 均在内存中安全脱敏，绝不进入模型 Prompt、日志、报告或 Git 仓库。 |
 
 ---
 
-## 🏗️ 架构概览
+## 🏗️ 系统架构
 
 ```text
-┌────────────────────────────────────────────────────────┐
-│                   CLI Entry (Typer)                    │
-│    run / mock-demo / live-agent-demo / gate-a / gate-b │
-├────────────────────────────────────────────────────────┤
-│                   Application Layer                    │
-│      run_research_task() & render_mvp_report()         │
-├────────────────────────────────────────────────────────┤
-│                  Constrained Agent Loop                │
-│    Feedback Loop / Budget Guard / Search-First Policy  │
-├──────────────────────────┬─────────────────────────────┤
-│   OpenAI-Compatible Client│     GitHub Tool Registry    │
-│  Chat Completions + Tools│  5 Read-Only Fixed GitHub Tools
-├──────────────────────────┴─────────────────────────────┤
-│         GitHub REST Client (HTTPX GET-Only, Fixed Host) │
-├────────────────────────────────────────────────────────┤
-│           Budget / Event Recorder / Config             │
-└────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│                        User Entrypoints                                │
+│       Web Dashboard (FastAPI + SSE)   │       CLI (Typer App)          │
+│           http://127.0.0.1:8080       │       github-scout-agent       │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                   Application Orchestration Layer                      │
+│             run_research_task() & SSE / CLI Event Bridge               │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                 Constrained Agent Research Loop                        │
+│   ┌───────────────────────────┐     ┌──────────────────────────────┐   │
+│   │ Budget Guard (5 Dimensions)│◄───►│ Policy & Evidence Controller  │   │
+│   │ Models / Requests / Bytes │     │ Search-First / Gate A / B    │   │
+│   └───────────────────────────┘     └──────────────────────────────┘   │
+└───────────────────┬────────────────────────────────┬───────────────────┘
+                    │                                │
+                    ▼                                ▼
+┌──────────────────────────────────────┐  ┌──────────────────────────────┐
+│       GitHub Tool Registry           │  │   OpenAI-Compatible Client   │
+│  - search_public_repositories        │  │  - Standard Tool Calling     │
+│  - get_public_repository             │  │  - Exponential Backoff Retry │
+│  - get_public_readme (64KB Cut)      │  │  - DeepSeek / Qwen / OpenAI  │
+│  - get_repository_license            │  └──────────────────────────────┘
+│  - get_repository_languages_topics   │
+└───────────────────┬──────────────────┘
+                    │ (GET-Only / Safe Host)
+                    ▼
+┌──────────────────────────────────────┐
+│       Official api.github.com        │
+└──────────────────────────────────────┘
 ```
-
-### 五大只读 GitHub 工具
-1. `search_public_repositories`: 自然语言公开仓库搜索（支持语言与排序条件过滤）。
-2. `get_public_repository`: 目标仓库基础元数据（描述、Star 数、分支、归档与可见性状态）。
-3. `get_public_readme`: 仓库 README 文档提取（Base64 安全解码与长度保护截断）。
-4. `get_repository_license`: SPDX 许可证信息提取。
-5. `get_repository_languages_and_topics`: 仓库多语言占比与 Topics 标签组合查询。
 
 ---
 
 ## 🚀 快速上手
 
 ### 1. 环境准备
-本项目要求 **Python ≥ 3.11**（已在 Python 3.13 验证）：
+项目要求 **Python ≥ 3.11**（已在 Python 3.13 验证）：
 
 ```powershell
-# 1. 创建并激活虚拟环境
+# 1. 克隆仓库并进入目录
+git clone https://github.com/opheliafarrant/github-scout-agent.git
+cd "github-scout-agent"
+
+# 2. 创建并激活虚拟环境 (Windows PowerShell)
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 
-# 2. 安装当前项目及测试依赖
-python -m pip install -e ".[test]"
+# 3. 安装项目依赖与测试套件
+pip install -e ".[test]"
 ```
 
-### 2. 环境配置
-通过环境变量注入模型接入点与凭据（支持任何标准的 OpenAI-compatible Chat Completions 服务）：
+*(Linux / macOS 用户使用 `source .venv/bin/activate` 激活)*
+
+### 2. 配置模型与服务端点
+GitHub Scout Agent 采用标准的 OpenAI-compatible Tool Calling 协议，兼容 **DeepSeek**、**通义千问 (Qwen)**、**OpenAI**、**Ollama** 等主流服务。
+
+通过环境变量配置接入点与凭证（Windows PowerShell 示例）：
 
 ```powershell
 # 必需：模型服务 Base URL 与 API Key
-$env:GITHUB_SCOUT_MODEL_BASE_URL="https://api.deepseek.com" # 或通义千问等端点
-$env:GITHUB_SCOUT_MODEL="deepseek-flash"                    # 或 qwen-max, deepseek-chat 等
+$env:GITHUB_SCOUT_MODEL_BASE_URL="https://api.deepseek.com"     # 或通义千问等兼容端点
+$env:GITHUB_SCOUT_MODEL="deepseek-flash"                        # 或 qwen-max, gpt-4o 等
 $env:GITHUB_SCOUT_MODEL_API_KEY="sk-your-model-api-key"
 
-# 可选：模型行为调优
-$env:GITHUB_SCOUT_MODEL_THINKING_MODE="disabled"           # disabled (默认) 或 enabled
-$env:GITHUB_SCOUT_MODEL_STRICT_TOOLS="false"               # false (默认) 或 true
-$env:GITHUB_SCOUT_MODEL_MAX_TOKENS="1024"                  # 响应最大 Token
+# 可选：模型行为微调
+$env:GITHUB_SCOUT_MODEL_THINKING_MODE="disabled"               # disabled (默认) 或 enabled
+$env:GITHUB_SCOUT_MODEL_STRICT_TOOLS="false"                   # false (默认) 或 true
+$env:GITHUB_SCOUT_MODEL_MAX_TOKENS="1024"                      # 最大单轮输出 Token
 
-# 可选：GitHub Token（未配置时默认使用公开未认证速率 60次/小时；配置后支持 5000次/小时）
+# 可选：GitHub Token（未配置时默认使用公开匿名速率 60次/小时；配置后支持 5000次/小时）
 $env:GITHUB_TOKEN="ghp_your_read_only_github_token"
 ```
 
-配置检查命令（安全检查配置状态，绝不回显密钥本身）：
+### 3. 配置自检
+通过只读命令快速验证当前环境与端点配置，绝不回显密钥明文：
+
 ```powershell
 github-scout-agent config
 github-scout-agent version
@@ -94,16 +136,35 @@ github-scout-agent version
 
 ---
 
-## 💻 命令行使用指南
+## 💻 两种使用方式
 
-### 1. 真实自然语言调研（核心生产路径）
-运行技术调研任务。为了防止意外产生网络消耗，生产命令要求显式附带 `--confirm-live`：
+### 方式 A：本地 Web 仪表盘（推荐日常交互）
+
+启动本地轻量 Web 服务器，在浏览器中直观追踪调研全流程：
 
 ```powershell
-# 基础运行（默认使用 10 次模型调用、20 次 GitHub GET、3 个候选仓库预算）
-github-scout-agent run "find small Python agent repositories with native tool calling" --confirm-live
+# 启动 Web 服务（默认监听 127.0.0.1:8080）
+github-scout-agent web
 
-# 深度调研（自定义放宽预算）
+# 或指定自定义端口
+github-scout-agent web --host 127.0.0.1 --port 8080
+```
+
+打开浏览器访问 `http://127.0.0.1:8080`：
+- **实时流程观察**：实时展现模型思考轮次、GitHub 工具调用记录、README 抓取进度与 5 维预算动态水位；
+- **结构化结果**：渲染候选项目卡片（Stars、License、主要语言）、横向对比表格与决策建议；
+- **一键导出**：支持 `📋 Copy Markdown` 一键复制完整报告，或 `📥 Export .md` 直接下载为本地 Markdown 文件；
+- **历史记录复查**：左侧边栏自动记录本地运行历史，随时点击复查历史调研成果。
+
+### 方式 B：CLI 命令行调研（适合无图形界面与脚本批处理）
+
+直接在终端执行端到端调研。为防止误触产生网络流量，线上真实运行要求显式附带 `--confirm-live`：
+
+```powershell
+# 1. 基础自然语言调研
+github-scout-agent run "find three open-source Python RAG frameworks supporting local deployment" --confirm-live
+
+# 2. 深度定制调研预算
 github-scout-agent run "find high performance C++ actor model frameworks" --confirm-live `
   --max-model-calls 15 `
   --max-github-requests 30 `
@@ -111,18 +172,18 @@ github-scout-agent run "find high performance C++ actor model frameworks" --conf
   --max-task-seconds 300
 ```
 
-### 2. 离线模拟与集成演示
-在没有模型 Key 或网络受限时，使用内置 Mock 工具链体验完整的 Agent 反馈回路：
+### 离线演示与无损探活（0 API 消耗）
+在没有配置模型 Key 或处于离线环境时，可使用内置 Mock 套件安全体验 Agent 交互循环：
 
 ```powershell
-# 1. 纯离线 Agent Loop 闭环演示（展示空结果查询自动改写与预算扣减）
+# 1. 离线 Agent Loop 闭环演练（演示空结果自动改写与预算消耗）
 github-scout-agent mock-demo
 
-# 2. 真实 GitHub REST + Mock LLM 接线演示（仅验证公开 GET 链路，不消耗模型 API）
+# 2. 真实 GitHub REST + Mock LLM 链路探活（仅调用公开 GET 验证网络）
 github-scout-agent live-agent-demo --scenario search
 github-scout-agent live-agent-demo --scenario repository
 
-# 3. DeepSeek / OpenAI 协议离线预检（验证 Tool Calling 请求体、Schema 与响应解析）
+# 3. OpenAI-compatible Tool Calling 协议离线预检
 github-scout-agent gate-a --dry-run
 github-scout-agent gate-b --dry-run
 ```
@@ -131,63 +192,50 @@ github-scout-agent gate-b --dry-run
 
 ## 🔬 验证矩阵与实测凭据 [E3]
 
-项目坚持**“物理证据优先”**与**“运行不报错 ≠ 验证通过”**的工程原则，拥有完整的双层验证网络：
+项目遵循**“物理证据优先”**与**“运行不报错 ≠ 验证通过”**的质量原则：
 
 ### 1. 离线自动化测试套件
 ```powershell
 pytest -m "not live_github" --tb=short
 ```
-- **测试通过率**：**176 passed, 1 deselected**（耗时 ~5 秒）。
-- **覆盖范围**：
-  - 工具注册、参数 Pydantic 校验与只读 GET 调度；
-  - 预算硬性拦截、候选容量满载与非致命降级；
-  - 多轮反馈循环、重复调用熔断、协议重试耗尽保护；
-  - 搜索响应裁剪（将 GitHub 60+ 字段精简至 18 个核心消费字段，响应预算消耗降低 90%+）；
-  - OpenAI-compatible Tool Calling 序列化、错误安全映射与网络重试退避；
-  - 模型传输层网络异常分类（TLS、Timeout、ConnectError 安全脱敏与重试）；
-  - 多语言意图解析、语言元数据过滤与候选证据充足度判定；
-  - FastAPI Web 服务路由、SSE 实时事件流、任务历史存储与报告导出。
+- **测试结果**：**176 passed, 1 deselected**（耗时 ~5 秒，100% 通过）。
+- **覆盖核心机制**：
+  - 五大 GitHub 工具参数 Pydantic 校验与 GET-only 拦截；
+  - 预算硬性拦截、候选容量满载与平滑降级；
+  - 搜索结果精简裁剪（60+ 字段裁剪至 18 字段，减少 90%+ 报文大小）；
+  - 多轮反馈循环、重复调用熔断、异常分类与指数退避重试；
+  - FastAPI 路由、SSE 事件流、任务历史与 Markdown 成果导出；
+  - 静态架构健康度 Brooks-Lint 90/100 分（0 Critical, 0 Warning）。
 
-### 2. 真实多模型端点验证 [E3]
-- **DeepSeek (`deepseek-flash` @ `api.deepseek.com`)**：通过 Gate A 协议预检与真实在线验收（CLI 实测与 Web UI 6 轮交互端到端跑通，自动吸收首轮 TLS 握手抖动，四段式对比决策报告）。
-- **Qwen-Max (`qwen-max` @ `maas.qianwenaiapi.com`)**：实测 3 次模型调用、4 次 GitHub GET 请求跑通端到端技术链路，自动检索并针对真实候选抓取 README 补充证据，生成结构化推荐报告。
+### 2. 真实多模型线上端到端闭环 [E3]
+- **DeepSeek (`deepseek-flash` @ `api.deepseek.com`)**：通过 CLI 与 Web UI 实测 6 轮交互端到端跑通，自动吸收首轮握手抖动，排除商业平台，生成规范四段式对比决策报告。
+- **通义千问 (`qwen-max` @ `maas.qianwenaiapi.com`)**：实测 3 次模型调用、4 次 GitHub GET 跑通技术选型链路，自动抓取 README 补充证据并完成对比。
 
 ---
 
-## 🌐 Web UI 交互界面 (V1.1)
+## 🗺️ 版本演进历史
 
-GitHub Scout Agent 内置了轻量级本地 Web 仪表盘，支持实时 SSE 事件流、结构化报告可视化与一键导出：
+| 版本 | 发布日期 | 定位与核心变更 | Git Tag | 状态 |
+| :--- | :--- | :--- | :--- | :--- |
+| **V1.0.0** | 2026-10-27 | **CLI MVP 核心引擎**：五大只读 GitHub 工具、受控 Agent 反馈循环、确定性 5 维预算、OpenAI 兼容 Tool Calling、Gate A/B 协议预检。 | `v1.0.0` (Commit `df3b4ce`) | 历史冻结 |
+| **V1.1.0** | 2026-10-27 | **Web UI 与生产级稳健性**：FastAPI + SSE 本地研究仪表盘、一键 Markdown 导出、搜索响应裁剪 90%+、模型网络指数退避重试、README 门控强化、176 项全自动化回归测试。 | `v1.1.0` (Commit `71802a9`) | **当前正式版** |
 
-```powershell
-# 启动本地 Web 服务器（默认端口 8080）
-github-scout-agent web
-
-# 或指定绑定地址与端口
-github-scout-agent web --host 127.0.0.1 --port 8080
-```
-
-- **访问地址**：打开浏览器访问 `http://127.0.0.1:8080`。
-- **特性**：
-  - **实时 SSE 进度流**：模型调用、工具调用、README 获取、预算消耗状态即时更新，红点显性展示异常原因；
-  - **决策报告渲染**：候选卡片、横向对比表格、证据缺口提醒与预算使用率仪表盘；
-  - **成果保存与导出**：支持 `📋 Copy Markdown` 一键复制完整报告，以及 `📥 Export .md` 一键下载本地 Markdown 文件；
-  - **历史任务记录**：侧边栏自动留存当次运行的历史调研任务，支持一键切换复查；
-  - **防翻译干扰设计**：原生内置 `notranslate` 保护，杜绝浏览器翻译插件篡改按钮状态或卡死 DOM。
+> 📌 **版本追溯提示**：正式版本标签 `v1.1.0` 永久锚定于 Commit `71802a9`。主分支 `master` 作为持续演进分支，包含后续工程配置调优、文档完善与发布维护提交。
 
 ---
 
-## 🛡️ 系统安全设计与能力边界
+## 🛡️ 安全模型与设计约束
 
-本项目在架构设计上坚持“受限安全环境”原则：
-1. **只读公开边界**：严格限制官方 `api.github.com`、公开仓库、GET-only 请求，不执行任何写操作，不克隆仓库到本地，不执行任何第三方代码；
-2. **速率与凭据隔离**：支持无 Token（60次/小时）与用户只读 Token（5000次/小时）；GitHub Token 和模型 API Key 仅存在于本地环境变量与内存，绝不进入模型上下文、日志、报告或 Git 仓库；
-3. **不可信输入防护**：第三方仓库的 README 与描述均标记为 `untrusted_remote_text`，由 64 KiB 流式截断保护，防止恶意超长文本或注入攻击；
-4. **确定性预算约束**：模型调用轮次、GitHub 请求数、任务耗时、响应字节与采纳候选数均受硬性预算控制器限制，达到边界时自动平滑收敛为最终报告。
+1. **只读公开边界**：仅允许向官方 `api.github.com` 发送 GET 请求，禁止任何 POST/PUT/DELETE 操作；不支持私有仓库与账号管理；
+2. **零本地代码执行**：绝不执行 `git clone`，不拉取完整仓库，不运行任何第三方 Python/Shell 脚本；
+3. **凭证脱敏与隔离**：GitHub Token 与模型 API Key 仅保存在内存，严格禁止注入 LLM 上下文、打印在控制台、记录进日志或提交到 Git 仓库；
+4. **不可信输入防护**：所有远程抓取的第三方 README 均标记为 `untrusted_remote_text`，设有 64 KiB 流式截断保护；
+5. **合规使用声明**：本项目仅用于开源技术选型与学术技术调研，不得用于违背 GitHub 服务条款的大规模恶意抓取或滥用。
 
 ---
 
-## 📄 许可证与免责声明
+## 📄 开源许可证与依赖说明
 
-本项目仅用于合法的公开技术研究与选型对比：
-- 不得用于任何违背 GitHub 服务条款的大规模自动化爬取或滥用；
-- 远程仓库的 README 与描述属于作者自身声明（标记为不可信输入），Agent 不承担供应链代码审计保证。
+- **许可证状态**：本项目当前处于私有验证向公开发布过渡阶段，开源许可证正在最终确定中（备选方案包括 **MIT License** 与 **Apache License 2.0**）。
+- **第三方依赖兼容性**：项目核心依赖（`httpx`、`pydantic`、`typer`、`fastapi`、`uvicorn`、`pytest`）均采用极宽松的 MIT 或 BSD-3 商业友好许可证，无任何传染性 Copyleft 风险。
+- **贡献与开发规范**：详见 [CONTRIBUTING.md](file:///c:/Users/Ophelia/Desktop/GitHub%20Scout%20Agent/CONTRIBUTING.md)。

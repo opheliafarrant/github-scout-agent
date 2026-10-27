@@ -3,11 +3,11 @@
 ## 1. Task Foundation
 - True Goal: 建立只读、有证据支持的 GitHub Scout Agent，并通过受限 Agent Loop 完成公开仓库候选发现、证据补充、透明对比与可核验推荐报告。
 - Current Stage: S4 验收与归档
-- Active Mainline: V1.1 正式版本冻结与 GitHub 私有仓库首次部署归档；Git Tag v1.1.0；176 项测试全绿。
+- Active Mainline: T50 正式发布文档规范化、版本记录校准与 GitHub 远程同步；Git Tag v1.1.0 稳定锚定。
 
 ## 2. Frozen Baselines and Inline Evidence
 - F1 Fact Baseline (客观状态与实测结论):
-  - F1-01: 工作目录为 C:\Users\Ophelia\Desktop\GitHub Scout Agent；已初始化本地 Git 仓库；未配置或推送 GitHub remote。
+  - F1-01: 工作目录 C:\Users\Ophelia\Desktop\GitHub Scout Agent；已配置 GitHub 私有远程仓库 opheliafarrant/github-scout-agent，双向同步正常。
   - F1-02: 运行环境确认：Python 3.13.5、pip 25.1.1、Git 2.53.0；核心依赖 httpx 0.28.1、pydantic 2.14.1、typer 0.27.3、fastapi 0.115+、uvicorn 0.30+、pytest 8.4.2。
   - F1-03: 五大 GitHub 只读工具固定：`search_public_repositories`、`get_public_repository`、`get_public_readme`、`get_repository_license`、`get_repository_languages_and_topics`，限制官方 `api.github.com`、公开仓库、GET-only 与 64 KiB 流式截断保护。
   - F1-04: 多模型端点兼容性已实测 [E3]: DeepSeek (`deepseek-flash`) 与 Qwen-Max (`qwen-max`) 真实链路在线验收全部通过。
@@ -23,7 +23,7 @@
   - F1-14: 模型网络重试与 Web UI 异常显性化固化：OpenAICompatibleClient 支持 max_retries 指数退避重试；Web UI / CLI 启用 2 次重试吸收握手抖动；前端补齐 task_terminated 红点详情与 notranslate 保护，finally 保障按钮必复位 [E3: 176 passed]。
   - F1-15: V1.1 Web UI 真实端到端验收通过 [E3: DeepSeek + Web 实时流]：实测 Python CLI 选型对比（Click vs Typer vs Fire）；6 轮模型、20 次 GitHub API、8 轮检索排除噪声、3 个 README 深度调查；请求预算边界自动触发平滑 Finalization 收尾；结构化产出四段式对比决策报告。
   - F1-16: V1.1 正式版本能力固化：搜索响应精简至 18 字段使单次搜索预算从 ~50KB 降至 ~3KB；模型请求具备指数退避重试；Web UI 支持 SSE 实时事件流与一键导出 Markdown (.md)；全部 176 项测试通过 [E3: 176 passed]。
-  - F1-17: 远程私有仓库部署完成 [E3]: opheliafarrant/github-scout-agent (Private, default branch `master` @ `8641de5`, tags `v1.0.0` @ `df3b4ce`, `v1.1.0` @ `71802a9`)；零密钥泄露。
+  - F1-17: 远程仓库与版本拓扑校验 [E3]: opheliafarrant/github-scout-agent (Private)；Tag `v1.0.0` 锚定 `df3b4ce`，Tag `v1.1.0` 锚定 `71802a9` (含功能冻结 `c32d17f`)；主分支 `master` 持续演进维保提交 (`8641de5` 预算调优、`359c050` 部署同步、后续文档演进)；全量审计零凭据泄露。
 - F2 Decision Baseline (已批准架构与决策边界):
   - F2-01 (D1): CLI 与本地 Web UI (FastAPI+SSE) 双入口；不采用重型框架与桌面端安装包。
   - F2-02 (D2): 严格只读与公开边界；支持无 Token (60次/h) 与用户只读 Token (5000次/h)；Token 不进模型/日志/报告/Git。
@@ -31,12 +31,12 @@
   - F2-04 (D4): 聚焦少量技术候选比对、证据收集与透明推荐报告；不执行第三方代码，不承担完整供应链审计。
   - F2-05 (D5): OpenAI-compatible Tool Calling 标准协议适配；不支持 Tool Calling 时明确失败，不采用非结构化正则替代。
 - F3 Version Baseline and Rollback Anchor:
-  - F3-38: `16c5957` (`docs: sync TASK_STATE with T45 Web UI live acceptance verification`)。
-  - F3-39: `cf97b02` (`fix: trim GitHub search results to 18 used fields...`)。
-  - F3-40: `e3ffc6e` (`docs: sync TASK_STATE F3-39 + T47`)。
-  - F3-41 (Current Rollback Anchor): `c32d17f` (Git Tag `v1.1.0`) | Dirty Tree Status: Clean (仅 2 份用户已删除的 doc 文件未暂存)。
+  - F3-Release-1.0: `df3b4ce` (Git Tag `v1.0.0` CLI MVP 冻结基线)。
+  - F3-Release-1.1 (Current Release Anchor): `71802a9` (Git Tag `v1.1.0` 正式版基线，含功能冻结 `c32d17f`)。
+  - F3-Master-Dev: `master` 分支头，承载后发布阶段维保提交与文档迭代；后续 Agent 严禁将 master 提交与已发布的冻结 Tag 混淆。
 ## 3. Current Engineering Flow and Impediments
-- Current Impediment / Stop Point: 无阻碍。V1.1 正式版本交付、基线冻结与 GitHub 私有仓库首次部署全部完成。
+- Current Impediment / Stop Point: 无阻碍。正式发布文档规范化与版本关系校准已全面完成。
+- [x] T50: 完成正式发布文档规范化、Git版本记录校准、README/CHANGELOG/CONTRIBUTING 建设与远程同步 -> 成果: README.md, CHANGELOG.md, CONTRIBUTING.md, TASK_STATE.md。
 - [x] T49: GitHub 私有仓库首次部署、凭证审计与远程一致性核验完成 -> Remote `origin` @ `opheliafarrant/github-scout-agent` (Private, tags `v1.0.0`, `v1.1.0`)。
 - [x] T48: 完成 V1.1 正式版本冻结、Web 成果导出功能与稳定基线归档 -> Git Tag `v1.1.0`。
 - [x] T47: 搜索响应裁剪（18 消费字段，响应字节降低 90%+）已完成 -> Target Artifact: src/github_scout_agent/github_api.py | Verification: 176 项全绿。
