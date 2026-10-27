@@ -78,6 +78,7 @@ def run_command(
             max_task_seconds=max_task_seconds,
             max_feedback_bytes=64 * 1024,
             max_model_response_bytes=32 * 1024,
+            max_response_bytes=256 * 1024,
         )
         github_token = config.github_token.get_secret_value() if config.github_token else None
         with GitHubRestClient(token=github_token, budget=budget, timeout=15.0, max_retries=0) as github:
