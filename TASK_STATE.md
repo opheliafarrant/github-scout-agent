@@ -16,6 +16,7 @@
   - F1-05: 离线测试与自动化套件：完整自动化回归 `158 passed, 1 deselected in 0.73s` [E3: pytest]，compileall 零错误，语法与协议全面自洽。
   - F1-06: 缺陷与时序修复已固化：B1 闭包晚绑定、B2 Callable 类型、B3 None 守卫、B4 Gate A dict 纯函数构建、M1 thinking_mode 字面量校验、P0 提示词时序引导、P0 预算放宽可配。
   - F1-07: 候选发现与采纳机制完全解耦（Commit 822c616）：搜索结果不再自动锁定候选容量；仅在模型调用详情/README 工具显式调查时才消耗 candidates 配额；新增证据门控拦截模型在证据不足时的过早停步。
+  - F1-08: Q1~Q3 深度修复与意图穿透固化（Commit 045b4b0, 2a147eb）：空结果促发更宽泛查询策略（Q1）；Finalization 彻底摆脱空候选提前触发（Q2）；任务明确声明 README/documentation 时强制开启 require_candidate_readme 门控，未查 README 时顶层 Completeness 真实降级为 partial，与模型诚实说明完全同步（Q3）；159 项测试全绿。
 - F2 Decision Baseline (已批准架构与决策边界):
   - F2-01 (D1): MVP 采用 CLI 入口；本地 Web UI 为后续阶段；不采用桌面端安装包。
   - F2-02 (D2): 严格只读与公开边界；支持无 Token (60次/h) 与用户只读 Token (5000次/h)；Token 不进模型/日志/报告/Git。
@@ -27,9 +28,12 @@
   - F3-23: 文档状态机同步提交：`5950fa7` (`docs: synchronize TASK_STATE with T36 and commit 99dd6d4`)。
   - F3-24 (Current Rollback Anchor): Git Tag `v1.0.0` (CLI MVP V1.0 正式发布冻结版本)。
   - F3-25: 候选解耦与证据门控提交：`822c616a602007008f2e31420ea75b4c182854d4` (`fix: candidate discovery decoupled from acceptance; evidence-gated model-stop`)。
+  - F3-26: Q1~Q3 提示词拓宽与空候选完整度修复提交：`045b4b035fabd4e47d722700ebe9d637a7e2a89c`。
+  - F3-27: README 关键词意图穿透提交：`2a147eb` (`fix: enforce require_candidate_readme on explicit readme and documentation keywords`)。
 
 ## 3. Current Engineering Flow and Impediments
 - Current Impediment / Stop Point: 无阻碍；CLI MVP V1.0 全部技术与业务指标通过，两份历史报告变更按指示保留未暂存删除状态。
+- [x] T39: 完成 Q1~Q3 深度修复与 README 显式意图门控穿透 -> Target Artifact: src/ & tests/ | Verification: 159 pytest 全部通过，模型空搜索重试与 README 未查降级完全一致。
 - [x] T38: 完成候选发现与采纳解耦，并通过坏候选压力测试与 158 项回归测试 -> Target Artifact: src/ & tests/ | Verification: `candidates_used` 在搜索阶段保持 0；空搜索下模型诚实输出 0 推荐，拒绝虚假凑数。
 - [x] T37: 完成 GitHub Scout Agent CLI MVP V1.0 最终收尾与版本冻结 -> Target Artifact: README.md, pyproject.toml, src/github_scout_agent/__init__.py, Git Tag `v1.0.0` | Verification: 158 pytest 全部通过，文档与代码完整同步，版本号升级 1.0.0。
 - [x] T36: 完成 B1~B4/M1 修复、预算放宽可配与 qwen-max 真实链路闭环 -> Target Artifact: src/ & tests/ | Verification: 158 passed，真实端点 3 模型轮次 + 4 GitHub GET 跑通。
