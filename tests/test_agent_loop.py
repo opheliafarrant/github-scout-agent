@@ -1109,3 +1109,195 @@ def test_malicious_readme_remains_data_and_never_creates_execution_event() -> No
     assert result.status == "completed"
     assert result.tool_results[1].data.trust_label == "untrusted_remote_text"
     assert all(event.event_type != "shell_executed" for event in result.events)
+
+
+def test_repeated_action_triggers_finalization_when_candidates_exist() -> None:
+    responses = [
+        # Round 1: search returns candidate repos
+        AssistantResponse(tool_calls=[
+            ToolCall(id="search-1", name="search_public_repositories", arguments=json.dumps({"query": "python agent"}))
+        ]),
+        # Round 2: model repeats exact same search
+        AssistantResponse(tool_calls=[
+            ToolCall(id="search-2", name="search_public_repositories", arguments=json.dumps({"query": "python agent"}))
+        ]),
+        # Round 3 (finalization): model provides comparison of the candidates
+        AssistantResponse(content="1) Verified Facts: Found octo/repo-0.\n2) Evidence Gaps: None.\n3) Recommendation: octo/repo-0."),
+    ]
+    mock = ScriptedMockLLM(responses)
+    budget = RequestBudget(max_candidates=3, max_github_requests=5, max_model_calls=5, max_feedback_bytes=20_000)
+    with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_full_pool_handler), max_retries=0) as client:
+        result = AgentLoop(
+            model=mock,
+            tools=build_github_tool_registry(client),
+            budget=budget,
+            config=AgentLoopConfig(finalization_reserve_calls=1, require_candidate_readme=True),
+        ).run("find python agent")
+
+    assert result.status == "completed"
+    assert result.termination_reason == "model_finalized"
+    assert mock.tool_choices == ["auto", "auto", "none"]
+    assert len(result.tool_results) == 2
+    assert result.tool_results[0].ok is True
+    assert result.tool_results[1].ok is False
+    assert result.tool_results[1].error.code == "repeated_action_blocked"
+    assert result.final_text is not None
+    assert "Verified Facts" in result.final_text
+    assert any(event.event_type == "finalization_started" for event in result.events)
+
+
+def test_consecutive_rate_limits_trigger_finalization_when_candidates_exist() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/search/repositories":
+            return httpx.Response(
+                200,
+                json={"total_count": 1, "items": [_repo()]},
+                request=request,
+            )
+        return httpx.Response(
+            403,
+            headers={"x-ratelimit-remaining": "0", "retry-after": "3600"},
+            json={"message": "API rate limit exceeded"},
+            request=request,
+        )
+
+    responses = [
+        # Round 1: search succeeds and finds candidate
+        AssistantResponse(tool_calls=[
+            ToolCall(id="search", name="search_public_repositories", arguments=json.dumps({"query": "agent"}))
+        ]),
+        # Round 2: call readme -> gets 403 rate limit
+        AssistantResponse(tool_calls=[
+            ToolCall(id="readme", name="get_public_readme", arguments=json.dumps({"owner": "octo", "repo": "demo-agent"}))
+        ]),
+        # Round 3: call repo -> gets 403 rate limit (2nd consecutive rate limit)
+        AssistantResponse(tool_calls=[
+            ToolCall(id="repo", name="get_public_repository", arguments=json.dumps({"owner": "octo", "repo": "demo-agent"}))
+        ]),
+        # Round 4 (finalization): model produces report on candidates found before rate limit
+        AssistantResponse(content="1) Verified Facts: Found octo/demo-agent from search.\n2) Evidence Gaps: Upstream rate limit prevented README retrieval.\n3) Recommendation: octo/demo-agent based on search metadata."),
+    ]
+    mock = ScriptedMockLLM(responses)
+    budget = RequestBudget(max_candidates=3, max_github_requests=5, max_model_calls=5, max_feedback_bytes=20_000)
+    with GitHubRestClient(budget=budget, transport=httpx.MockTransport(handler), max_retries=0) as client:
+        result = AgentLoop(
+            model=mock,
+            tools=build_github_tool_registry(client),
+            budget=budget,
+            config=AgentLoopConfig(finalization_reserve_calls=1, require_candidate_readme=True),
+        ).run("find agent")
+
+    assert result.status == "completed"
+    assert result.termination_reason == "model_finalized"
+    assert result.evidence_complete is False
+    assert result.final_text is not None
+    assert "rate limit" in result.final_text.lower()
+    assert any("README evidence unavailable" in gap for gap in result.evidence_gaps)
+    assert mock.tool_choices == ["auto", "auto", "auto", "none"]
+    assert any(event.event_type == "finalization_started" for event in result.events)
+
+
+def test_consecutive_rate_limits_stop_cleanly_when_no_candidates() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            403,
+            headers={"x-ratelimit-remaining": "0", "retry-after": "3600"},
+            json={"message": "API rate limit exceeded"},
+            request=request,
+        )
+
+    responses = [
+        # Round 1: search gets 403 rate limit
+        AssistantResponse(tool_calls=[
+            ToolCall(id="search-1", name="search_public_repositories", arguments=json.dumps({"query": "query 1"}))
+        ]),
+        # Round 2: search gets 403 rate limit (2nd consecutive)
+        AssistantResponse(tool_calls=[
+            ToolCall(id="search-2", name="search_public_repositories", arguments=json.dumps({"query": "query 2"}))
+        ]),
+        AssistantResponse(content="Must not be reached"),
+    ]
+    mock = ScriptedMockLLM(responses)
+    budget = RequestBudget(max_candidates=3, max_github_requests=5, max_model_calls=5, max_feedback_bytes=20_000)
+    with GitHubRestClient(budget=budget, transport=httpx.MockTransport(handler), max_retries=0) as client:
+        result = AgentLoop(
+            model=mock,
+            tools=build_github_tool_registry(client),
+            budget=budget,
+            config=AgentLoopConfig(finalization_reserve_calls=1),
+        ).run("find agent")
+
+    assert result.status == "terminated"
+    assert result.termination_reason == "rate_limited"
+    assert result.final_text is not None
+    assert "rate limit" in result.final_text.lower()
+    assert "60 requests/hour" in result.final_text
+    assert budget.model_calls_used == 2
+
+
+def test_rate_limit_counter_resets_on_successful_tool_call() -> None:
+    call_index = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_index
+        call_index += 1
+        if call_index == 1:
+            return httpx.Response(
+                403,
+                headers={"x-ratelimit-remaining": "0", "retry-after": "3600"},
+                json={"message": "API rate limit exceeded"},
+                request=request,
+            )
+        return httpx.Response(
+            200,
+            json={"total_count": 1, "items": [_repo()]},
+            request=request,
+        )
+
+    responses = [
+        AssistantResponse(tool_calls=[
+            ToolCall(id="search-1", name="search_public_repositories", arguments=json.dumps({"query": "query 1"}))
+        ]),
+        AssistantResponse(tool_calls=[
+            ToolCall(id="search-2", name="search_public_repositories", arguments=json.dumps({"query": "query 2"}))
+        ]),
+        AssistantResponse(content="Final recommendation based on search 2."),
+    ]
+    mock = ScriptedMockLLM(responses)
+    budget = RequestBudget(max_candidates=3, max_github_requests=5, max_model_calls=5, max_feedback_bytes=20_000)
+    with GitHubRestClient(budget=budget, transport=httpx.MockTransport(handler), max_retries=0) as client:
+        result = AgentLoop(
+            model=mock,
+            tools=build_github_tool_registry(client),
+            budget=budget,
+            config=AgentLoopConfig(finalization_reserve_calls=1),
+        ).run("find agent")
+
+    assert result.status == "completed"
+    assert result.termination_reason in {"model_completed", "model_finalized"}
+    assert budget.github_requests_used == 2
+
+
+def test_convergence_priority_policy_in_prompt() -> None:
+    class CaptureModel:
+        def __init__(self) -> None:
+            self.messages = []
+
+        def complete(self, messages, tools, *, tool_choice="auto"):
+            self.messages.append(list(messages))
+            return AssistantResponse(content="done")
+
+    model = CaptureModel()
+    budget = RequestBudget(max_model_calls=1)
+    with GitHubRestClient(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"total_count": 0, "items": []}, request=request)
+    )) as client:
+        AgentLoop(
+            model=model,
+            tools=build_github_tool_registry(client),
+            budget=budget,
+        ).run("find python agents")
+
+    policy = model.messages[0][1].content
+    assert "Priority rule" in policy
+    assert "Do not continue repeatedly searching" in policy

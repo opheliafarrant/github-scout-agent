@@ -31,6 +31,7 @@ class ModelAdapter(Protocol):
 class AgentLoopConfig:
     max_protocol_retries: int = 1
     max_repeated_actions: int = 1
+    max_rate_limit_retries: int = 2
     finalization_reserve_calls: int = 0
     required_language: str | None = None
     required_languages: tuple[str, ...] = ()
@@ -73,8 +74,13 @@ class AgentLoop:
         # Always include core research quality policy.
         policy_lines = [
             "Research policy: always search first, verify with evidence, never guess candidate names.",
+            "Priority rule: When you have discovered promising candidates from search, immediately "
+            "investigate their details or README using candidate evidence tools. Do not continue "
+            "repeatedly searching if candidates are already available to verify.",
             "If initial search returns few or no results, try broader queries: shorten phrases, "
             "use synonyms, drop optional qualifiers, or try adjacent domains.",
+            "If tool calls encounter rate limits or errors, synthesize and summarize findings from "
+            "the evidence acquired so far rather than repeating failed calls.",
         ]
         required_languages = self._required_languages()
         if required_languages or self.config.require_candidate_readme:
@@ -98,6 +104,7 @@ class AgentLoop:
         tool_results: list[ToolResult] = []
         repeated_actions: Counter[str] = Counter()
         protocol_errors = 0
+        consecutive_rate_limits = 0
         final_text: str | None = None
         termination_reason = "unknown"
         finalization_done = False
@@ -212,6 +219,14 @@ class AgentLoop:
                 )
                 self.events.emit("budget_updated", **self.budget.snapshot())
 
+                if result.ok:
+                    consecutive_rate_limits = 0
+                elif result.error and (result.error.code == "rate_limited" or result.error.category == "rate_limit"):
+                    consecutive_rate_limits += 1
+                    if consecutive_rate_limits >= self.config.max_rate_limit_retries:
+                        should_stop = True
+                        termination_reason = "rate_limited"
+
                 if result.error and result.error.category in {"protocol", "input"}:
                     protocol_errors += 1
                     if protocol_errors > self.config.max_protocol_retries:
@@ -253,10 +268,24 @@ class AgentLoop:
                     break
 
             if finalize_after_batch:
-                return self._finalize(messages, tool_results, final_text)
+                return self._finalize(messages, tool_results, final_text, stop_reason="github_requests")
             if should_stop:
+                if (
+                    not finalization_done
+                    and self.config.finalization_reserve_calls > 0
+                    and self._has_candidates(tool_results)
+                    and self._finalization_call_available()
+                ):
+                    finalization_done = True
+                    return self._finalize(messages, tool_results, final_text, stop_reason=termination_reason)
                 if not termination_reason or termination_reason == "unknown":
                     termination_reason = "safe_stop"
+                if termination_reason == "rate_limited" and not final_text:
+                    final_text = (
+                        "GitHub API rate limit exceeded (HTTP 403). No repositories could be retrieved "
+                        "because the unauthenticated rate limit (60 requests/hour) was reached. "
+                        "Please configure a GITHUB_TOKEN or wait for the rate limit to reset."
+                    )
                 self.events.emit("task_terminated", reason=termination_reason, budget=self.budget.snapshot())
                 return self._result("terminated", termination_reason, final_text, messages, tool_results)
 
@@ -367,6 +396,18 @@ class AgentLoop:
             for result in tool_results
         )
 
+    @staticmethod
+    def _has_candidates(tool_results: list[ToolResult]) -> bool:
+        for result in tool_results:
+            if not result.ok:
+                continue
+            data = result.data
+            if bool(getattr(data, "items", None)):
+                return True
+            if getattr(data, "full_name", None) is not None:
+                return True
+        return False
+
     def _evidence_complete(
         self,
         tool_results: list[ToolResult],
@@ -439,28 +480,47 @@ class AgentLoop:
         messages: list[AgentMessage],
         tool_results: list[ToolResult],
         final_text: str | None,
+        *,
+        stop_reason: str | None = None,
     ) -> AgentRunResult:
         try:
             self.budget.reserve_model_call()
         except BudgetExceeded as exc:
             self.events.emit("task_terminated", reason=exc.dimension, budget=self.budget.snapshot())
             return self._result("terminated", exc.dimension, final_text, messages, tool_results)
+        prompt_lines = [
+            "Produce the final evidence-constrained comparison and recommendation now.",
+            "Do not call tools. Structure your response in three clearly labeled sections:",
+            "1) Verified Facts — repository metadata and README content retrieved by tools, "
+            "with source URLs;",
+            "2) Evidence Gaps — what was requested but could not be verified;",
+            "3) Recommendation — your judgment based solely on the verified facts above.",
+            "If fewer candidates qualify than requested, recommend only the qualifying ones "
+            "and explain why others were rejected. If no candidates qualify, state this clearly "
+            "with the search evidence, do not fabricate recommendations.",
+        ]
+        if stop_reason == "rate_limited":
+            prompt_lines.append(
+                "Note: Further repository research was stopped due to upstream GitHub API rate limiting. "
+                "Synthesize and present findings from the evidence acquired prior to rate limiting, "
+                "and clearly document the rate limit in Evidence Gaps."
+            )
+        elif stop_reason == "repeated_action_blocked":
+            prompt_lines.append(
+                "Note: Further search was stopped because repeated identical queries were blocked. "
+                "Synthesize and present findings from the evidence acquired so far."
+            )
+        elif stop_reason in {"github_requests", "research_budget_boundary"}:
+            prompt_lines.append(
+                "Note: Further research reached the request budget boundary. "
+                "Synthesize and present findings from the evidence acquired so far."
+            )
         final_instruction = AgentMessage(
             role="user",
-            content=(
-                "Produce the final evidence-constrained comparison and recommendation now. "
-                "Do not call tools. Structure your response in three clearly labeled sections: "
-                "1) Verified Facts — repository metadata and README content retrieved by tools, "
-                "with source URLs; "
-                "2) Evidence Gaps — what was requested but could not be verified; "
-                "3) Recommendation — your judgment based solely on the verified facts above. "
-                "If fewer candidates qualify than requested, recommend only the qualifying ones "
-                "and explain why others were rejected. If no candidates qualify, state this clearly "
-                "with the search evidence, do not fabricate recommendations."
-            ),
+            content=" ".join(prompt_lines),
         )
         messages.append(final_instruction)
-        self.events.emit("finalization_started", model_call=self.budget.model_calls_used)
+        self.events.emit("finalization_started", model_call=self.budget.model_calls_used, stop_reason=stop_reason)
         try:
             response = self.model.complete(
                 messages=list(messages),

@@ -286,3 +286,35 @@ def test_requires_readme_evidence_on_readme_keywords() -> None:
     assert requires_native_tool_calling_evidence("find tools with python documentation") is True
     assert requires_native_tool_calling_evidence("find small python CLI tools") is False
 
+
+def test_render_mvp_report_on_rate_limited_termination() -> None:
+    result = AgentRunResult(
+        status="terminated",
+        termination_reason="rate_limited",
+        final_text=(
+            "GitHub API rate limit exceeded (HTTP 403). No repositories could be retrieved "
+            "because the unauthenticated rate limit (60 requests/hour) was reached. "
+            "Please configure a GITHUB_TOKEN or wait for the rate limit to reset."
+        ),
+        messages=[],
+        tool_results=[
+            ToolResult(
+                tool_name="search_public_repositories",
+                ok=False,
+                error=ToolError(code="rate_limited", category="rate_limit", message="GitHub rate limit blocked the request", status_code=403),
+                request_count=1,
+            )
+        ],
+        events=[],
+        budget={"github_requests_used": 1, "model_calls_used": 2},
+        evidence_complete=False,
+        evidence_gaps=["no candidates discovered yet — broaden the search or try different keywords"],
+    )
+    report = render_mvp_report("find tools", result)
+    assert "- Status: terminated" in report
+    assert "- Termination: rate_limited" in report
+    assert "- Completeness: partial" in report
+    assert "No accepted repository candidate was returned" in report
+    assert "GitHub API rate limit exceeded (HTTP 403)" in report
+    assert "rate_limited" in report
+

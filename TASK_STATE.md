@@ -13,10 +13,11 @@
   - F1-04: 多模型端点兼容性已实测 [E3]:
     - DeepSeek (`deepseek-flash` @ `api.deepseek.com`): T35 真实链路在线验收通过，完成多 Tool Calls 预算前阻断与 `tool_choice=none` Finalization 收尾。
     - Qwen-Max (`qwen-max` @ `maas.qianwenaiapi.com`): 真实链路在线验收通过，3 次模型请求、4 次 GitHub GET 完整跑通，生成逐候选 README 证据分析推荐报告。
-  - F1-05: 离线测试与自动化套件：完整自动化回归 `158 passed, 1 deselected in 0.73s` [E3: pytest]，compileall 零错误，语法与协议全面自洽。
+  - F1-05: 离线测试与自动化套件：完整自动化回归 `165 passed, 1 deselected in 0.89s` [E3: pytest]，compileall 零错误，语法与协议全面自洽。
   - F1-06: 缺陷与时序修复已固化：B1 闭包晚绑定、B2 Callable 类型、B3 None 守卫、B4 Gate A dict 纯函数构建、M1 thinking_mode 字面量校验、P0 提示词时序引导、P0 预算放宽可配。
   - F1-07: 候选发现与采纳机制完全解耦（Commit 822c616）：搜索结果不再自动锁定候选容量；仅在模型调用详情/README 工具显式调查时才消耗 candidates 配额；新增证据门控拦截模型在证据不足时的过早停步。
-  - F1-08: Q1~Q3 深度修复与意图穿透固化（Commit 045b4b0, 2a147eb）：空结果促发更宽泛查询策略（Q1）；Finalization 彻底摆脱空候选提前触发（Q2）；任务明确声明 README/documentation 时强制开启 require_candidate_readme 门控，未查 README 时顶层 Completeness 真实降级为 partial，与模型诚实说明完全同步（Q3）；159 项测试全绿。
+  - F1-08: Q1~Q3 深度修复与意图穿透固化（Commit 045b4b0, 2a147eb）：空结果促发更宽泛查询策略（Q1）；Finalization 彻底摆脱空候选提前触发（Q2）；任务明确声明 README/documentation 时强制开启 require_candidate_readme 门控，未查 README 时顶层 Completeness 真实降级为 partial，与模型诚实说明完全同步（Q3）。
+  - F1-09: 自适应研究收敛与速率限制优雅降级固化：提示词注入候选优先与收敛引导；连续 2 次 403 rate_limited 快速阻断；具备候选时无论遇到 repeated_action_blocked、速率限制或预算边界均平滑回退至 Finalization，完整保全已收集证据；无候选阻断时准确输出 403 溯因说明；165 项测试全通过。
 - F2 Decision Baseline (已批准架构与决策边界):
   - F2-01 (D1): MVP 采用 CLI 入口；本地 Web UI 为后续阶段；不采用桌面端安装包。
   - F2-02 (D2): 严格只读与公开边界；支持无 Token (60次/h) 与用户只读 Token (5000次/h)；Token 不进模型/日志/报告/Git。
@@ -32,7 +33,8 @@
   - F3-27: README 关键词意图穿透提交：`2a147eb` (`fix: enforce require_candidate_readme on explicit readme and documentation keywords`)。
 
 ## 3. Current Engineering Flow and Impediments
-- Current Impediment / Stop Point: 无阻碍；CLI MVP V1.0 全部技术与业务指标通过，两份历史报告变更按指示保留未暂存删除状态。
+- Current Impediment / Stop Point: 无阻碍；自适应研究收敛与速率限制优雅降级完成，165 项离线测试全部通过，两份历史报告变更按指示保留未暂存删除状态。
+- [x] T40: 完成自适应研究收敛与速率限制优雅降级 -> Target Artifact: src/ & tests/ | Verification: 165 pytest 全部通过，测试覆盖重复操作降级、连续速率限制阻断与成果保全。
 - [x] T39: 完成 Q1~Q3 深度修复与 README 显式意图门控穿透 -> Target Artifact: src/ & tests/ | Verification: 159 pytest 全部通过，模型空搜索重试与 README 未查降级完全一致。
 - [x] T38: 完成候选发现与采纳解耦，并通过坏候选压力测试与 158 项回归测试 -> Target Artifact: src/ & tests/ | Verification: `candidates_used` 在搜索阶段保持 0；空搜索下模型诚实输出 0 推荐，拒绝虚假凑数。
 - [x] T37: 完成 GitHub Scout Agent CLI MVP V1.0 最终收尾与版本冻结 -> Target Artifact: README.md, pyproject.toml, src/github_scout_agent/__init__.py, Git Tag `v1.0.0` | Verification: 158 pytest 全部通过，文档与代码完整同步，版本号升级 1.0.0。
