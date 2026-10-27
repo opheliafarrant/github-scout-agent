@@ -85,7 +85,17 @@ def infer_required_languages(task: str) -> tuple[str, ...]:
 
 def requires_native_tool_calling_evidence(task: str) -> bool:
     lowered = task.casefold()
-    return any(term in lowered for term in ("tool calling", "function calling", "native tool", "mcp"))
+    return any(
+        term in lowered
+        for term in (
+            "tool calling",
+            "function calling",
+            "native tool",
+            "mcp",
+            "readme",
+            "documentation",
+        )
+    )
 
 
 def _source_urls(value: Any) -> list[str]:

@@ -6,7 +6,13 @@ import httpx
 import pytest
 from pydantic import SecretStr
 
-from github_scout_agent.application import infer_required_language, infer_required_languages, render_mvp_report, run_research_task
+from github_scout_agent.application import (
+    infer_required_language,
+    infer_required_languages,
+    render_mvp_report,
+    requires_native_tool_calling_evidence,
+    run_research_task,
+)
 from github_scout_agent.agent_loop import AgentRunResult
 from github_scout_agent.github_models import ToolError, ToolResult
 from github_scout_agent.budget import RequestBudget
@@ -273,3 +279,10 @@ def test_task_language_constraints_reach_production_search(task, expected_langua
     feedback = next(m for m in model_requests[1]["messages"] if m["role"] == "tool")
     assert feedback["tool_call_id"] == "qualified-search"
     assert set(item["language"] for item in json.loads(feedback["content"])["data"]["items"]) == set(expected_languages)
+
+
+def test_requires_readme_evidence_on_readme_keywords() -> None:
+    assert requires_native_tool_calling_evidence("find tools with detailed README documentation") is True
+    assert requires_native_tool_calling_evidence("find tools with python documentation") is True
+    assert requires_native_tool_calling_evidence("find small python CLI tools") is False
+
