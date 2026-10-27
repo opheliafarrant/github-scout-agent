@@ -25,7 +25,7 @@ def _response(request: httpx.Request, payload: object, status: int = 200) -> htt
     return httpx.Response(status, json=payload, request=request)
 
 
-def _client(handler, *, budget: RequestBudget | None = None, key: str = MODEL_KEY) -> tuple[OpenAICompatibleClient, list[httpx.Request]]:
+def _client(handler, *, budget: RequestBudget | None = None, key: str = MODEL_KEY, max_retries: int = 0) -> tuple[OpenAICompatibleClient, list[httpx.Request]]:
     requests: list[httpx.Request] = []
 
     def dispatch(request: httpx.Request) -> httpx.Response:
@@ -38,6 +38,7 @@ def _client(handler, *, budget: RequestBudget | None = None, key: str = MODEL_KE
         model="mock-model",
         budget=budget,
         transport=httpx.MockTransport(dispatch),
+        max_retries=max_retries,
     )
     return client, requests
 
@@ -425,3 +426,57 @@ def test_t27_network_and_timeout_errors_are_safely_classified_without_leaks() ->
     assert GITHUB_KEY not in msg
     assert "https://" not in msg
     assert "ConnectError" in msg
+
+
+def test_model_client_retries_transient_network_error_and_succeeds() -> None:
+    calls = 0
+
+    def retry_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise httpx.ConnectError("Transient TLS reset")
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"role": "assistant", "content": "hello"}}],
+                "usage": {"total_tokens": 5},
+            },
+            request=request,
+        )
+
+    client, _ = _client(retry_handler, max_retries=2)
+    with client:
+        res = client.complete([AgentMessage(role="user", content="hi")], [])
+    assert res.content == "hello"
+    assert calls == 2
+
+
+def test_model_client_fails_after_max_retries_exhausted() -> None:
+    calls = 0
+
+    def failing_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        raise httpx.ConnectError("Permanent down")
+
+    client, _ = _client(failing_handler, max_retries=2)
+    with client, pytest.raises(ModelAdapterError) as caught:
+        client.complete([AgentMessage(role="user", content="hi")], [])
+    assert caught.value.code == "network_error"
+    assert calls == 3  # initial + 2 retries
+
+
+def test_model_client_does_not_retry_non_retryable_errors() -> None:
+    calls = 0
+
+    def auth_error_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(401, json={"error": "invalid_key"}, request=request)
+
+    client, _ = _client(auth_error_handler, max_retries=2)
+    with client, pytest.raises(ModelAdapterError) as caught:
+        client.complete([AgentMessage(role="user", content="hi")], [])
+    assert caught.value.code == "authentication_error"
+    assert calls == 1  # 401 is not retryable, no extra attempts

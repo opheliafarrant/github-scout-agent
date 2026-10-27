@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" translate="no" class="notranslate">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -108,7 +108,7 @@ Example: Find three open-source Python AI agents that can search GitHub reposito
       <label>Model calls</label><input id="max-model" type="number" value="10" min="1" max="30">
       <label>GitHub reqs</label><input id="max-gh" type="number" value="20" min="1" max="60">
       <label>Timeout (s)</label><input id="max-time" type="number" value="180" min="10" max="600">
-      <button id="run-btn" onclick="startTask()">▶ Start Research</button>
+      <button id="run-btn" translate="no" class="notranslate" onclick="startTask()">▶ Start Research</button>
     </div>
   </div>
   <div class="event-feed" id="event-feed"></div>
@@ -203,17 +203,16 @@ async function startTask(){
           const d = JSON.parse(data);
           currentTaskId = d.task_id;
           if(d.report) renderReport(d.report, d.budget);
-          btn.disabled = false; btn.textContent = '▶ Start Research';
           loadHistory();
         }
         if(event==='error'&&data){
           feed.innerHTML += '<div class="event"><div class="dot error"></div><div class="text" style="color:var(--error)">'+esc(JSON.parse(data).message)+'</div></div>';
-          btn.disabled = false; btn.textContent = '▶ Start Research';
         }
       }
     }
   }catch(e){
     feed.innerHTML += '<div class="event"><div class="dot error"></div><div class="text" style="color:var(--error)">Connection error: '+esc(e.message)+'</div></div>';
+  }finally{
     btn.disabled = false; btn.textContent = '▶ Start Research';
   }
 }
@@ -233,6 +232,8 @@ function handleEvent(evt){
   else if(t==='budget_updated'){icon='info';label='Budget';detail='candidates: '+d.accepted_candidate_count+'/'+d.max_candidates+', gh: '+d.github_requests_used+'/'+d.max_github_requests+', model: '+d.model_calls_used+'/'+d.max_model_calls;}
   else if(t==='finalization_started'){icon='model';label='Finalization';detail=d.stop_reason||'';}
   else if(t==='evidence_incomplete_continue'){icon='warn';label='Evidence incomplete';detail=(d.gaps||[]).join(', ');}
+  else if(t==='task_terminated'){icon='error';label='Task terminated: '+(d.reason||'');detail=d.error||d.error_code||'';}
+  else if(t==='task_completed'){icon='readme';label='Task completed';detail=d.reason||'';}
   
   feed.innerHTML += '<div class="event"><div class="dot '+icon+'"></div><div class="text"><b>'+esc(label)+'</b> <span style="color:var(--muted)">'+esc(detail)+'</span></div></div>';
   feed.scrollTop = feed.scrollHeight;

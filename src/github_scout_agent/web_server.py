@@ -125,7 +125,7 @@ async def _run_and_stream(task_id: str, req: TaskRequest, request: Request) -> A
         try:
             github_token = config.github_token.get_secret_value() if config.github_token else None
             with GitHubRestClient(token=github_token, budget=budget, timeout=15.0, max_retries=0) as github:
-                with OpenAICompatibleClient.from_config(config, budget=budget, timeout=45.0) as model:
+                with OpenAICompatibleClient.from_config(config, budget=budget, timeout=45.0, max_retries=2) as model:
                     result = run_research_task(req.task, model=model, github=github, budget=budget, events=events)
             report = render_mvp_report(req.task, result)
             status = _store.get(task_id)

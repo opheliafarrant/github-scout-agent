@@ -164,7 +164,7 @@ def test_run_production_assembly_uses_mock_transports(monkeypatch) -> None:
 
     class MockModel(OpenAICompatibleClient):
         @classmethod
-        def from_config(cls, config, *, budget=None, transport=None, timeout=10.0):
+        def from_config(cls, config, *, budget=None, transport=None, timeout=10.0, **kwargs):
             return cls(
                 base_url=config.model_base_url,
                 api_key=config.model_api_key,
@@ -175,6 +175,7 @@ def test_run_production_assembly_uses_mock_transports(monkeypatch) -> None:
                 thinking_mode=config.thinking_mode,
                 strict_tools=config.strict_tools,
                 max_tokens=config.max_tokens,
+                **kwargs,
             )
 
     monkeypatch.setattr("github_scout_agent.cli.load_config", lambda: AppConfig(

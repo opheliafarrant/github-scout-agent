@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 import json
 import ssl
+import time
 from collections.abc import Mapping
 from typing import Literal
 from urllib.parse import urlsplit, urlunsplit
@@ -98,6 +99,7 @@ class OpenAICompatibleClient:
         budget: RequestBudget | None = None,
         transport: httpx.BaseTransport | None = None,
         timeout: float = 10.0,
+        max_retries: int = 0,
         thinking_mode: Literal["disabled", "enabled"] | None = None,
         strict_tools: bool = True,
         max_tokens: int | None = None,
@@ -113,6 +115,7 @@ class OpenAICompatibleClient:
         self.thinking_mode = thinking_mode
         self.strict_tools = strict_tools
         self.max_tokens = max_tokens
+        self.max_retries = max(0, max_retries)
         self._api_key = api_key.get_secret_value() if isinstance(api_key, SecretStr) else api_key
         if not self._api_key:
             raise ModelAdapterError("model API Key is not configured", code="model_not_configured", category="configuration")
@@ -131,6 +134,7 @@ class OpenAICompatibleClient:
         budget: RequestBudget | None = None,
         transport: httpx.BaseTransport | None = None,
         timeout: float = 10.0,
+        max_retries: int = 0,
     ) -> "OpenAICompatibleClient":
         if not config.model_base_url or not config.model:
             raise ModelAdapterError("model Base URL and Model are required", code="model_not_configured", category="configuration")
@@ -141,6 +145,7 @@ class OpenAICompatibleClient:
             budget=budget,
             transport=transport,
             timeout=timeout,
+            max_retries=max_retries,
             thinking_mode=config.thinking_mode,
             strict_tools=config.strict_tools,
             max_tokens=config.max_tokens,
@@ -173,42 +178,60 @@ class OpenAICompatibleClient:
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self._api_key}",
         }
-        try:
-            with self._client.stream("POST", self.endpoint, headers=headers, json=payload) as response:
-                content_length = response.headers.get("content-length")
-                if content_length and content_length.isdigit() and self.budget.max_model_response_bytes is not None:
-                    if int(content_length) > self.budget.max_model_response_bytes:
+
+        for attempt in range(1, self.max_retries + 2):
+            self.budget.check_task_time()
+            if attempt > 1:
+                time.sleep(min(1.0 * (2 ** (attempt - 2)), 4.0))
+            try:
+                with self._client.stream("POST", self.endpoint, headers=headers, json=payload) as response:
+                    content_length = response.headers.get("content-length")
+                    if content_length and content_length.isdigit() and self.budget.max_model_response_bytes is not None:
+                        if int(content_length) > self.budget.max_model_response_bytes:
+                            raise ModelAdapterError(
+                                "model response exceeds the response-size limit",
+                                code="response_too_large",
+                                category="budget",
+                            )
+                    chunks: list[bytes] = []
+                    response_size = 0
+                    try:
+                        for chunk in response.iter_bytes():
+                            response_size += len(chunk)
+                            self.budget.record_model_response_chunk(len(chunk), response_size)
+                            chunks.append(chunk)
+                    except BudgetExceeded as exc:
                         raise ModelAdapterError(
                             "model response exceeds the response-size limit",
                             code="response_too_large",
                             category="budget",
-                        )
-                chunks: list[bytes] = []
-                response_size = 0
-                try:
-                    for chunk in response.iter_bytes():
-                        response_size += len(chunk)
-                        self.budget.record_model_response_chunk(len(chunk), response_size)
-                        chunks.append(chunk)
-                except BudgetExceeded as exc:
-                    raise ModelAdapterError(
-                        "model response exceeds the response-size limit",
-                        code="response_too_large",
-                        category="budget",
-                    ) from exc
-                status_code = response.status_code
-                content = b"".join(chunks)
-        except ModelAdapterError:
-            raise
-        except httpx.TimeoutException as exc:
-            raise ModelAdapterError("model request timed out", code="timeout", category="timeout", retryable=True) from exc
-        except httpx.RequestError as exc:
-            detail = _safe_network_error_detail(exc)
-            raise ModelAdapterError(f"model network request failed ({detail})", code="network_error", category="network", retryable=True) from exc
+                        ) from exc
+                    status_code = response.status_code
+                    content = b"".join(chunks)
 
-        if status_code < 200 or status_code >= 300:
-            raise self._http_error(status_code, content)
-        return self._parse_response(content)
+                if status_code < 200 or status_code >= 300:
+                    err = self._http_error(status_code, content)
+                    if err.retryable and attempt <= self.max_retries:
+                        continue
+                    raise err
+
+                return self._parse_response(content)
+
+            except ModelAdapterError as exc:
+                if exc.retryable and attempt <= self.max_retries:
+                    continue
+                raise
+            except httpx.TimeoutException as exc:
+                if attempt <= self.max_retries:
+                    continue
+                raise ModelAdapterError("model request timed out", code="timeout", category="timeout", retryable=True) from exc
+            except httpx.RequestError as exc:
+                if attempt <= self.max_retries:
+                    continue
+                detail = _safe_network_error_detail(exc)
+                raise ModelAdapterError(f"model network request failed ({detail})", code="network_error", category="network", retryable=True) from exc
+
+        raise ModelAdapterError("model request failed after retries", code="network_error", category="network", retryable=True)
 
     def build_payload(
         self,

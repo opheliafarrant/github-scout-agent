@@ -3,7 +3,7 @@
 ## 1. Task Foundation
 - True Goal: 建立只读、有证据支持的 GitHub Scout Agent，并通过受限 Agent Loop 完成公开仓库候选发现、证据补充、透明对比与可核验推荐报告。
 - Current Stage: S4 验收与归档
-- Active Mainline: V1.1 Web UI 上线与事件桥接固化；FastAPI + SSE + 单页应用；173 项测试通过。
+- Active Mainline: 模型网络抖动重试容错与 Web UI 异常显性化；176 项测试通过。
 
 ## 2. Frozen Baselines and Inline Evidence
 - F1 Fact Baseline (客观状态与实测结论):
@@ -11,7 +11,7 @@
   - F1-02: 运行环境确认：Python 3.13.5、pip 25.1.1、Git 2.53.0；核心依赖 httpx 0.28.1、pydantic 2.14.1、typer 0.27.3、fastapi 0.115+、uvicorn 0.30+、pytest 8.4.2。
   - F1-03: 五大 GitHub 只读工具固定：`search_public_repositories`、`get_public_repository`、`get_public_readme`、`get_repository_license`、`get_repository_languages_and_topics`，限制官方 `api.github.com`、公开仓库、GET-only 与 64 KiB 流式截断保护。
   - F1-04: 多模型端点兼容性已实测 [E3]: DeepSeek (`deepseek-flash`) 与 Qwen-Max (`qwen-max`) 真实链路在线验收全部通过。
-  - F1-05: 离线测试与自动化套件：完整自动化回归 `173 passed, 1 deselected in 1.20s` [E3: pytest]，compileall 零错误，语法与协议全面自洽。
+  - F1-05: 离线测试与自动化套件：完整自动化回归 `176 passed, 1 deselected in 5.25s` [E3: pytest]，compileall 零错误，语法与协议全面自洽。
   - F1-06: 缺陷与时序修复已固化：B1 闭包晚绑定、B2 Callable 类型、B3 None 守卫、B4 Gate A dict 纯函数构建、M1 thinking_mode 字面量校验、P0 提示词时序引导、P0 预算放宽可配。
   - F1-07: 候选发现与采纳机制完全解耦（Commit 822c616）：搜索结果不再自动锁定候选容量；仅在显式调查时消耗配额；证据门控拦截过早停步。
   - F1-08: Q1~Q3 深度修复与意图穿透固化：空结果促发更宽泛查询；消除空候选提前收尾；README 关键词强制 require_candidate_readme 门控。
@@ -19,7 +19,8 @@
   - F1-10: 产品级质量修复固化：常态注入核心研究策略；丰富工具描述；--require-readme CLI 标志；_report_is_complete 要求 accepted_candidate_count > 0。
   - F1-11: 线上验收通过 [E3: DeepSeek]：4 搜索 + 3 README + 排除无关平台 + 决策级报告；response_bytes 256KB 裕量充分。
   - F1-12: V1.1 Web UI 上线：FastAPI 9 条路由；单页 SPA；web 命令注册成功；实时 SSE 事件流。
-  - F1-13: Web UI SSE 流式事件与后台线程桥接固化：run_research_task 暴露 events 参数；SSEEventRecorder 继承 EventRecorder 保证敏感信息脱敏与合法序号；asyncio.to_thread 解耦同步网络阻塞；新增 6 项 Web 专用测试全部通过 [E3: 173 passed]。
+  - F1-13: Web UI SSE 流式事件与后台线程桥接固化：run_research_task 暴露 events 参数；SSEEventRecorder 保证脱敏；asyncio.to_thread 解耦同步网络阻塞。
+  - F1-14: 模型网络重试与 Web UI 异常显性化固化：OpenAICompatibleClient 支持 max_retries 指数退避重试；Web UI / CLI 启用 2 次重试吸收握手抖动；前端补齐 task_terminated 红点详情与 notranslate 保护，finally 保障按钮必复位 [E3: 176 passed]。
 - F2 Decision Baseline (已批准架构与决策边界):
   - F2-01 (D1): CLI 与本地 Web UI (FastAPI+SSE) 双入口；不采用重型框架与桌面端安装包。
   - F2-02 (D2): 严格只读与公开边界；支持无 Token (60次/h) 与用户只读 Token (5000次/h)；Token 不进模型/日志/报告/Git。
@@ -27,12 +28,12 @@
   - F2-04 (D4): 聚焦少量技术候选比对、证据收集与透明推荐报告；不执行第三方代码，不承担完整供应链审计。
   - F2-05 (D5): OpenAI-compatible Tool Calling 标准协议适配；不支持 Tool Calling 时明确失败，不采用非结构化正则替代。
 - F3 Version Baseline and Rollback Anchor:
-  - F3-33: `99f9998` (`docs: sync TASK_STATE — live verification F1-11, T44, F3-33`)。
-  - F3-34: `f3da4f1` (`feat: V1.1 Web UI — FastAPI SSE streaming research dashboard`)。
   - F3-35: `de219b3` (`fix: bridge SSE events from AgentLoop and run sync research in thread pool`)。
-  - F3-36 (Current Rollback Anchor): `5707240` (`docs: document V1.1 Web UI command, features, and 173 test coverage`) | Dirty Tree Status: Clean (仅 2 份用户已删除的 doc 文件未暂存)。
+  - F3-36: `5707240` (`docs: document V1.1 Web UI command, features, and 173 test coverage`)。
+  - F3-37 (Current Rollback Anchor): `HEAD` | Dirty Tree Status: Clean (仅 2 份用户已删除的 doc 文件未暂存)。
 ## 3. Current Engineering Flow and Impediments
-- Current Impediment / Stop Point: 无阻碍。V1.1 Web UI 构建与事件流桥接完成，173 项测试全绿，待用户在浏览器中验收。
+- Current Impediment / Stop Point: 无阻碍。网络重试容错与 Web UI 显性化完成，176 项测试全绿，待用户重新验证。
+- [x] T46: 完成模型网络抖动重试机制与 Web UI 异常状态显性化 -> Target Artifact: src/ & tests/ | Verification: 176 项 pytest 全通过。
 - [ ] T45: V1.1 Web UI 浏览器端到端验收（启动 web → 输入需求 → SSE 实时观察 → 阅读报告） → 待用户执行。
 - [x] T44: 线上真实端点验收（deepseek-flash + GitHub API） → Target Artifact: 线上运行报告 | Verification: 4 搜索 + 3 README + 1 排除 + 2 条件推荐 + 四段报告。
 - [x] T43: 修复 CLI response_bytes 预算过低导致 README 阶段被跳过 → Target Artifact: src/github_scout_agent/cli.py | Verification: 167 全通过；线上 response_bytes 60KB/256KB。
