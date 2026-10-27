@@ -2,8 +2,8 @@
 
 ## 1. Task Foundation
 - True Goal: 建立可回退、可测试的 GitHub Scout Agent Python 工程基础和只读工具系统，并按阶段推进受限 Agent Loop 开发。
-- Current Stage: 四项产品质量修复及 Go/Swift 复核补充已本地冻结；真实在线验收未重新授权
-- Active Mainline: 本轮离线修复完成，等待用户审阅或后续任务。
+- Current Stage: S5 真实在线 MVP 验收与收敛（千问 qwen-max 真实端点验证通过，Bug B1-B4 修复完成并冻结）
+- Active Mainline: 端到端链路完整打通，无已知运行时缺陷，等待用户验收或新功能规划。
 
 ## 2. Frozen Baselines and Inline Evidence
 - F1 Fact Baseline:
@@ -56,6 +56,8 @@
   - F1-47: T29-F1 冻结前检查：T29 修改范围与独立审查一致；README 最小更新为 T25 技术链路通过但产品验收 B、T29 离线 126 passed、下一次 A 级验收需授权；历史报告删除变更未暂存，`.scout`、API Key、T25 原始日志未修改。
   - F1-48: 当前工作树四项产品质量修复：Go/Swift 英文动词/形容词不再误判语言；明确多语言条件保留全部目标并按 OR 筛选；Usage 的 *_tokens 数值保留，凭据键仍脱敏；直接 get_public_repository 成功结果计入候选预算；成功搜索结果可触发收敛，避免不必要模型轮次。完整离线 pytest 147 passed、1 deselected；compileall、diff check 通过；未发真实请求、未提交。
   - F1-49: 用户提供 Antigravity 复核结论 PASS WITH NON-BLOCKING NOTES，指出 Go/Swift 介词短语和并列语言漏识别。本轮先复现，再补齐 in go/in swift 及由真实语言名连接的枚举，保留 Go find/Swift and lightweight 的负例；另经生产装配 MockTransport 复现并修复语言匹配集合未随任务更新的问题。完整离线 pytest 157 passed、1 deselected（exit 0），compileall 与 diff check 均 exit 0；用户授权本地提交；没有真实 API 请求。
+  - F1-50: T35 真实在线验收（任务：`run "find small Python agent repositories with native tool calling" --confirm-live`，直连 DeepSeek 与 GitHub，日志已固化至 `.scout/t35_live_output.txt`）：Status `completed`、Termination `model_finalized`、Completeness `partial`（因 README 截断与 404 缺失，证据门槛未虚假标记 complete）；耗时 21.11 秒；模型请求 4 次（4/5）、GitHub GET 7 次（7/8）、候选 3 个（antoinezambelli/forge, axclogo/AxcAgentEngine, mmmayo13/gemma_4_tool_calling，语言均经验证为 Python）；网络前阻断（Search 2 容量阻断 requests=0，get_repository_languages_and_topics 因仅剩 1 GET 请求不足 2 次而在网络前阻断 requests=0）；Finalization 以 `tool_choice=none` 完整输出对比与推荐；Token 统计真实保留且凭据安全脱敏；0 重试、0 写入。
+  - F1-51: B1~B4 与 M1 修复完成（B1 循环闭包默认参数绑定、B2 Callable 类型、B3 tool_registry None 守卫、B4 gate_a dict 纯函数构建、M1 thinking_mode 字面量校验）；预算放宽至 10/20/180 并开放 CLI 命令行参数；提示词时序引导（先搜索后查详情）彻底消除多 Tool Calls 盲目并发拦截；158 离线测试全绿；千问 qwen-max 真实端点实测 3 次模型请求、4 次 GitHub GET 完整跑通端到端 MVP，产生含 README 证据的推荐报告。
 - F2 Decision Baseline:
   - F2-01 (D1): MVP 采用 CLI；本地 Web UI 后置；Windows 桌面应用不属于 MVP。
   - F2-02 (D2): 支持无 Token 和用户自配只读 Token；只读公开仓库；不支持私有仓库、账户管理和任何 GitHub 写操作；Token 不进入模型、报告、普通日志或版本控制。
@@ -88,11 +90,14 @@
 - F3-19: T24-F1 本地冻结提交：a29b06ac5c54fb3e4fc94c575d5e820a4383f35c (`fix: finalize agent safely across tool call batches`)；后续 T26 提交基于此版本；未 push、reset、clean。
 - F3-20: T26 网络异常分类提交：1fd73b49bbce3f655fc9b789543833abb8a6bea1 (`fix: safely classify model transport errors`)；修改 model_client.py 与 test_model_client.py；提交时保留用户要求的两份报告删除变更。
 - F3-21: T29-F1 本地冻结提交：`fix: enforce language qualification and evidence-aware finalization`；基于 1fd73b49，最终 SHA 以提交后 `git rev-parse HEAD` 为准；未执行真实请求、reset、clean 或 push。
+- F3-22: 本地冻结提交：99dd6d4cb5501026dbb231c9618c63303ffe5a7c (`fix: resolve bugs B1-B4, relax budgets, add search-first policy`)。
 
-- 本轮冻结锚点：包含本条记录、父版本为 d1712cb3bb9e3d026598ebc692a344ea173e7559、提交信息为 fix: preserve language intent and enforce research boundaries 的本地提交；完整 SHA 见提交后收据。
+- 本轮冻结锚点：99dd6d4cb5501026dbb231c9618c63303ffe5a7c
 
 ## 3. Current Engineering Flow and Impediments
-- Current Impediment / Stop Point: 无本轮已复现的未解决阻塞；当前结论只覆盖离线场景，真实服务与推荐质量需另行授权验收。两份用户要求删除的报告文件变更保留。
+- Current Impediment / Stop Point: 无阻塞；真实在线 MVP 验收通过，端到端完整打通。两份用户要求删除的历史报告保持删除状态未暂存。
+- [x] T36: 完成 B1~B4/M1 修复、预算放宽可配与 qwen-max 真实链路闭环 -> Target Artifact: src/ & tests/ | Verification: 158 pytest 全部通过，真实 MVP 端到端 3 模型轮次 + 4 GitHub GET 闭环，生成详细推荐报告。
+- [x] T35: 完成真实在线 MVP 端到端验收 -> Target Artifact: .scout/t35_live_output.txt | Verification: 物理日志已固化至 `.scout/t35_live_output.txt`；实测 4 次模型请求、7 次 GitHub GET、3 个 Python 候选、Finalization `tool_choice=none`、Status `completed`、Termination `model_finalized`、退出码 0；README 截断与缺失安全降级为 partial，Token 完整记录，安全预算完全闭环。
 - [x] T01: 完成 S0 产品需求分析 -> Target Artifact: docs/GitHub-Scout-Agent-产品需求分析-V0.1.md | Verification: 文件已实际读取；V0.1 保留。
 - [x] T02: 完成 S1 产品需求冻结 -> Target Artifact: docs/GitHub-Scout-Agent-PRD-V0.2.md | Verification: 五项决策、MVP、Agent Loop、只读边界、F/S 验收和 S0-S6 路线已写入；文档一致性检查通过。
 - [x] T03: 完成 S2 技术架构设计 -> Target Artifact: docs/GitHub-Scout-Agent-技术架构设计-V0.1.md | Verification: 总体架构、Agent Loop、工具/API、数据、报告、安全、预算、错误、技术栈、测试和 S3-S5 依赖已写入；文档一致性检查通过；待用户验收。
