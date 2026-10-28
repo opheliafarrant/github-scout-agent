@@ -39,6 +39,22 @@ DEFAULT_MAX_RETRIES = 1
 DEFAULT_FALLBACK_RETRY_DELAY = 1.0
 MAX_SEARCH_PER_PAGE = 5
 
+# Curated canonical slugs for well-known projects that GitHub search may not
+# index reliably (for example after a rename).  Keys are normalized with
+# _normalize_known_project_key; values are the canonical "owner/repo" form.
+KNOWN_PROJECTS: dict[str, str] = {
+    "cline": "cline/cline",
+    "aider": "Aider-AI/aider",
+    "openhands": "OpenHands/OpenHands",
+    "sweagent": "SWE-agent/SWE-agent",
+    "minisweagent": "SWE-agent/mini-swe-agent",
+}
+
+
+def _normalize_known_project_key(value: str) -> str:
+    """Collapse a project name to a search-index-independent lookup key."""
+    return re.sub(r"[^a-z0-9]", "", value.casefold())
+
 # Fields extracted from search result items that _normalize_repository and
 # _is_public_repository actually read.  Everything else in the raw JSON
 # (60+ fields per item) is discarded before response-bytes are recorded.
@@ -582,6 +598,20 @@ class GitHubRestClient:
                 "candidate capacity is full; repository metadata for a new candidate is blocked",
             )
         return record
+
+    def get_known_repository(self, *, name: str) -> RepositoryRecord:
+        if not name or len(name) > 128 or any(ord(char) < 32 for char in name):
+            raise GithubApiError("invalid_name", "input", "name is empty, too long, or contains control characters")
+        key = _normalize_known_project_key(name)
+        slug = KNOWN_PROJECTS.get(key)
+        if slug is None:
+            available = ", ".join(sorted(KNOWN_PROJECTS.values()))
+            raise GithubApiError(
+                "unknown_known_project", "input",
+                f"'{name}' does not match a curated known project; known projects: {available}",
+            )
+        owner, repo = slug.split("/", 1)
+        return self.get_public_repository(owner=owner, repo=repo)
 
     def get_public_readme(self, *, owner: str, repo: str, ref: str | None = None) -> ReadmeEvidence:
         owner = validate_owner_repo_part(owner, "owner")

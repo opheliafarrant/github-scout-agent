@@ -64,7 +64,7 @@ GitHub Scout Agent v1.1.0 marks the transition from our initial CLI MVP into a r
 
 ### 🔬 Test & Empirical Verification Matrix [E3]
 
-- **Offline Automated Tests**: 176 passed (100% pass rate in ~5 seconds).
+- **Offline Automated Tests**: 184 passed (100% pass rate in ~5 seconds).
 - **Static Code Quality**: Brooks-Lint Health Score 90/100 (0 Critical, 0 Warning).
 - **Live Model Endpoint Verification**:
   - DeepSeek (`deepseek-flash` @ `api.deepseek.com`): Verified end-to-end multi-turn research loop.
@@ -111,6 +111,6 @@ github-scout-agent web
 | **Search Payload** | Full raw GitHub payload (~50KB) | Trimmed 18 fields (~3KB, 90%+ reduction) |
 | **Network Retries** | None (failed on handshake jitter) | Exponential backoff retry for OpenAI-compatible APIs |
 | **Evidence Gating**| Basic heuristic | Strict `--require-readme` & intent-driven keyword gating |
-| **Test Suite** | 120+ tests | 176 automated tests |
+| **Test Suite** | 120+ tests | 184 automated tests |
 | **License** | Evaluation phase | Apache License 2.0 |
 ```

@@ -862,3 +862,83 @@ class TestReplaceCandidate:
                     target_owner="new", target_repo="repo",
                 )
             assert exc_info.value.code == "candidate_not_found"
+
+
+class TestKnownRepository:
+    """Tests for the get_known_repository direct-lookup fallback."""
+
+    def test_resolves_canonical_slug_and_hits_one_request(self) -> None:
+        import httpx
+        from github_scout_agent.github_api import GitHubRestClient
+
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.method == "GET"
+            assert request.url.host == "api.github.com"
+            assert str(request.url.path) == "/repos/cline/cline"
+            return httpx.Response(200, json=_repo(full_name="cline/cline"), request=request)
+
+        with GitHubRestClient(transport=_transport(handler, seen)) as client:
+            registry = build_github_tool_registry(client)
+            result = registry.dispatch("get_known_repository", json.dumps({"name": "cline"}))
+
+        assert result.ok is True
+        assert result.request_count == 1
+        assert result.data.full_name == "cline/cline"
+        assert len(seen) == 1
+
+    def test_accepts_candidate_against_budget(self) -> None:
+        import httpx
+        from github_scout_agent.github_api import GitHubRestClient
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=_repo(full_name="cline/cline"), request=request)
+
+        budget = RequestBudget(max_candidates=3)
+        with GitHubRestClient(budget=budget, transport=_transport(handler, [])) as client:
+            result = build_github_tool_registry(client).dispatch(
+                "get_known_repository", {"name": "cline"}
+            )
+
+        assert result.ok is True
+        assert "cline/cline" in budget.accepted_candidate_ids
+        assert budget.candidates_used == 1
+
+    def test_unknown_name_is_controlled_input_error(self) -> None:
+        import httpx
+        from github_scout_agent.github_api import GitHubRestClient
+
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=_repo(), request=request)
+
+        with GitHubRestClient(transport=_transport(handler, seen)) as client:
+            result = build_github_tool_registry(client).dispatch(
+                "get_known_repository", {"name": "definitely-not-a-known-project"}
+            )
+
+        assert result.ok is False
+        assert result.error.code == "unknown_known_project"
+        assert result.error.category == "input"
+        assert result.request_count == 0
+        assert seen == []
+
+    def test_alias_normalization_case_insensitive(self) -> None:
+        import httpx
+        from github_scout_agent.github_api import GitHubRestClient
+
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert str(request.url.path) == "/repos/SWE-agent/SWE-agent"
+            return httpx.Response(200, json=_repo(full_name="SWE-agent/SWE-agent"), request=request)
+
+        with GitHubRestClient(transport=_transport(handler, seen)) as client:
+            result = build_github_tool_registry(client).dispatch(
+                "get_known_repository", {"name": "Swe-Agent"}
+            )
+
+        assert result.ok is True
+        assert result.data.full_name == "SWE-agent/SWE-agent"
