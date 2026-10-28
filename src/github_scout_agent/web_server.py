@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import threading
 import time
+import uuid
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
@@ -44,7 +47,137 @@ class TaskStatus(BaseModel):
     budget: dict = Field(default_factory=dict)
 
 
-_store: dict[str, TaskStatus] = {}
+class HistoryStore:
+    """Thread-safe, file-backed storage for Web UI research tasks."""
+
+    def __init__(
+        self,
+        file_path: Path | None = None,
+        max_entries: int = 100,
+    ) -> None:
+        self.max_entries = max_entries
+        self._lock = threading.Lock()
+        self._tasks: dict[str, TaskStatus] = {}
+        self._file_path = file_path or self._resolve_path()
+        self._load()
+
+    @staticmethod
+    def _resolve_path() -> Path:
+        custom = os.environ.get("GITHUB_SCOUT_HISTORY_FILE")
+        if custom:
+            return Path(custom).resolve()
+        local_scout = Path.cwd() / ".scout"
+        if local_scout.is_dir():
+            return local_scout / "web_history.jsonl"
+        return Path.home() / ".github-scout-agent" / "web_history.jsonl"
+
+    @property
+    def file_path(self) -> Path:
+        return self._file_path
+
+    def _load(self) -> None:
+        with self._lock:
+            self._tasks.clear()
+            if not self._file_path.is_file():
+                return
+            try:
+                with open(self._file_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            data = json.loads(line)
+                            status = TaskStatus(**data)
+                            self._tasks[status.id] = status
+                        except Exception:
+                            continue
+                if len(self._tasks) > self.max_entries:
+                    excess = len(self._tasks) - self.max_entries
+                    for k in list(self._tasks.keys())[:excess]:
+                        del self._tasks[k]
+            except Exception:
+                pass
+
+    def _persist_locked(self) -> None:
+        """Write in-memory tasks atomically to disk while holding lock."""
+        try:
+            self._file_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = self._file_path.with_suffix(f".tmp_{uuid.uuid4().hex[:8]}")
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                for status in self._tasks.values():
+                    f.write(status.model_dump_json() + "\n")
+            os.replace(tmp_path, self._file_path)
+        except Exception:
+            pass
+
+    def get(self, task_id: str) -> TaskStatus | None:
+        with self._lock:
+            return self._tasks.get(task_id)
+
+    def set(self, status: TaskStatus) -> None:
+        with self._lock:
+            self._tasks[status.id] = status
+            if len(self._tasks) > self.max_entries:
+                excess = len(self._tasks) - self.max_entries
+                for k in list(self._tasks.keys())[:excess]:
+                    del self._tasks[k]
+            self._persist_locked()
+
+    def update(
+        self,
+        task_id: str,
+        *,
+        status: str | None = None,
+        termination_reason: str | None = None,
+        report: str | None = None,
+        budget: dict | None = None,
+    ) -> TaskStatus | None:
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if not task:
+                return None
+            if status is not None:
+                task.status = status
+            if termination_reason is not None:
+                task.termination_reason = termination_reason
+            if report is not None:
+                task.report = report
+            if budget is not None:
+                task.budget = budget
+            self._persist_locked()
+            return task
+
+    def values(self) -> list[TaskStatus]:
+        with self._lock:
+            return list(self._tasks.values())
+
+    def clear(self) -> None:
+        with self._lock:
+            self._tasks.clear()
+            if self._file_path.is_file():
+                try:
+                    self._file_path.unlink()
+                except Exception:
+                    pass
+
+    def __getitem__(self, task_id: str) -> TaskStatus:
+        with self._lock:
+            return self._tasks[task_id]
+
+    def __setitem__(self, task_id: str, status: TaskStatus) -> None:
+        self.set(status)
+
+    def __contains__(self, task_id: str) -> bool:
+        with self._lock:
+            return task_id in self._tasks
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._tasks)
+
+
+_store = HistoryStore()
 
 
 def _make_config(overrides: dict[str, str] | None = None) -> AppConfig:
@@ -75,9 +208,9 @@ async def config_status() -> dict:
 
 @web_app.post("/api/run")
 async def run_task(req: TaskRequest, request: Request) -> StreamingResponse:
-    task_id = f"task_{int(time.monotonic() * 1000)}"
-    status = TaskStatus(id=task_id, task=req.task, status="running", started_at=time.monotonic())
-    _store[task_id] = status
+    task_id = f"task_{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}"
+    status = TaskStatus(id=task_id, task=req.task, status="running", started_at=time.time())
+    _store.set(status)
 
     return StreamingResponse(
         _run_and_stream(task_id, req, request),
@@ -94,10 +227,7 @@ async def _run_and_stream(task_id: str, req: TaskRequest, request: Request) -> A
     config = load_config()
     if not config.model_ready:
         yield _sse("error", {"code": "not_configured", "message": "Model configuration incomplete. Set env vars and restart."})
-        status = _store.get(task_id)
-        if status:
-            status.status = "error"
-            status.termination_reason = "configuration"
+        _store.update(task_id, status="error", termination_reason="configuration")
         return
 
     budget = RequestBudget(
@@ -128,17 +258,15 @@ async def _run_and_stream(task_id: str, req: TaskRequest, request: Request) -> A
                 with OpenAICompatibleClient.from_config(config, budget=budget, timeout=45.0, max_retries=2) as model:
                     result = run_research_task(req.task, model=model, github=github, budget=budget, events=events)
             report = render_mvp_report(req.task, result)
-            status = _store.get(task_id)
-            if status:
-                status.status = result.status
-                status.termination_reason = result.termination_reason
-                status.report = report
-                status.budget = result.budget
+            _store.update(
+                task_id,
+                status=result.status,
+                termination_reason=result.termination_reason,
+                report=report,
+                budget=result.budget,
+            )
         except Exception as exc:
-            status = _store.get(task_id)
-            if status:
-                status.status = "error"
-                status.termination_reason = str(exc)
+            _store.update(task_id, status="error", termination_reason=str(exc))
         finally:
             loop.call_soon_threadsafe(event_queue.put_nowait, None)
 

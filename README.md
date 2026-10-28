@@ -8,7 +8,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/version-v1.1.0-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg" alt="Python Version">
-  <img src="https://img.shields.io/badge/tests-184%20passed-success.svg" alt="Test Status">
+  <img src="https://img.shields.io/badge/tests-188%20passed-success.svg" alt="Test Status">
   <img src="https://img.shields.io/badge/architecture-Read--Only%20GET%20%7C%20Zero--Execution-brightgreen.svg" alt="Architecture">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-brightgreen.svg" alt="License"></a>
 </p>
@@ -34,7 +34,7 @@
 
 | 模块 | 特性说明 |
 | :--- | :--- |
-| **🌐 本地 Web 仪表盘** | 内置基于 FastAPI + SSE (Server-Sent Events) 的单页交互界面，毫秒级流式呈现思考过程、API 调用与预算消耗，支持结构化报告一键复制与 Markdown (.md) 导出。 |
+| **🌐 本地 Web 仪表盘** | 内置基于 FastAPI + SSE (Server-Sent Events) 的单页交互界面，毫秒级流式呈现思考过程、API 调用与预算消耗；支持本地 JSONL 持久化任务历史（服务重启不丢失）、线程安全互斥防护、结构化报告一键复制与 Markdown (.md) 导出。 |
 | **⌨️ 功能完备的 CLI 引擎** | 支持生产级实时调研 (`run`)、纯离线 Mock 回路验证 (`mock-demo`)、真实 GitHub API 连通性探活 (`live-agent-demo`) 以及模型协议预检 (`gate-a` / `gate-b`)。 |
 | **🔍 深度证据闭环** | 实施 Search-First 时序引导与证据门控；必须通过 README 调查获得一手证据才可完成决策，严禁仅凭搜索列表主观猜测。 |
 | **⚡ 检索响应裁剪** | 将 GitHub 原始 60+ 字段裁剪至 18 个核心消费字段，单次检索响应字节缩减 90%+（~50KB 降至 ~3KB），大幅节省上下文与预算。 |
@@ -200,13 +200,13 @@ github-scout-agent gate-b --dry-run
 ```powershell
 pytest -m "not live_github" --tb=short
 ```
-- **测试结果**：**184 passed, 1 deselected**（耗时 ~5 秒，100% 通过）。
+- **测试结果**：**188 passed, 1 deselected**（耗时 ~5 秒，100% 通过）。
 - **覆盖核心机制**：
   - 七大 GitHub 工具参数 Pydantic 校验与 GET-only 拦截；
   - 预算硬性拦截、候选容量满载与平滑降级；
   - 搜索结果精简裁剪（60+ 字段裁剪至 18 字段，减少 90%+ 报文大小）；
   - 多轮反馈循环、重复调用熔断、异常分类与指数退避重试；
-  - FastAPI 路由、SSE 事件流、任务历史与 Markdown 成果导出；
+  - FastAPI 路由、SSE 事件流、任务历史本地持久化与并发互斥保护、Markdown 成果导出；
   - 静态架构健康度 Brooks-Lint 90/100 分（0 Critical, 0 Warning）。
 
 ### 2. 真实多模型线上端到端闭环 [E3]

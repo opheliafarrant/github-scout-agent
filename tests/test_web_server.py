@@ -10,7 +10,7 @@ from github_scout_agent.agent_loop import AgentRunResult
 from github_scout_agent.budget import RequestBudget
 from github_scout_agent.config import AppConfig
 from github_scout_agent.events import EventRecorder
-from github_scout_agent.web_server import _store, web_app
+from github_scout_agent.web_server import HistoryStore, TaskStatus, _store, web_app
 
 
 @pytest.fixture
@@ -125,3 +125,127 @@ def test_report_route_not_found(client: TestClient) -> None:
     response = client.get("/api/report/nonexistent_id")
     assert response.status_code == 200
     assert response.json() == {"error": "not_found"}
+
+
+def test_history_store_persistence_and_reload(tmp_path: Path) -> None:
+    history_file = tmp_path / "web_history.jsonl"
+    store = HistoryStore(file_path=history_file, max_entries=50)
+
+    # 1. Store initial tasks
+    task1 = TaskStatus(
+        id="task_1",
+        task="Find RAG frameworks",
+        status="completed",
+        termination_reason="model_finalized",
+        started_at=1700000000.0,
+        report="# RAG Report\n\n- LangChain",
+        budget={"model_calls": 3},
+    )
+    task2 = TaskStatus(
+        id="task_2",
+        task="Find Vector DBs",
+        status="running",
+        started_at=1700000010.0,
+    )
+    store.set(task1)
+    store.set(task2)
+
+    assert history_file.is_file()
+    assert len(store) == 2
+
+    # Update task2
+    store.update(
+        "task_2",
+        status="completed",
+        termination_reason="budget_exhausted",
+        report="# Vector DB Report",
+        budget={"model_calls": 10},
+    )
+
+    # 2. Simulate server restart by creating a new store instance pointing to same file
+    store_reloaded = HistoryStore(file_path=history_file, max_entries=50)
+    assert len(store_reloaded) == 2
+    assert "task_1" in store_reloaded
+    assert "task_2" in store_reloaded
+
+    loaded_task2 = store_reloaded.get("task_2")
+    assert loaded_task2 is not None
+    assert loaded_task2.status == "completed"
+    assert loaded_task2.termination_reason == "budget_exhausted"
+    assert loaded_task2.report == "# Vector DB Report"
+    assert loaded_task2.budget == {"model_calls": 10}
+
+
+def test_history_store_capacity_fifo(tmp_path: Path) -> None:
+    history_file = tmp_path / "fifo_history.jsonl"
+    store = HistoryStore(file_path=history_file, max_entries=3)
+
+    for i in range(5):
+        store.set(TaskStatus(
+            id=f"task_{i}",
+            task=f"Task {i}",
+            status="completed",
+            started_at=float(i),
+        ))
+
+    assert len(store) == 3
+    # 0 and 1 should have been evicted
+    assert "task_0" not in store
+    assert "task_1" not in store
+    # 2, 3, 4 should remain
+    assert "task_2" in store
+    assert "task_3" in store
+    assert "task_4" in store
+
+    # Verify file reload preserves only the 3 remaining
+    reloaded = HistoryStore(file_path=history_file, max_entries=3)
+    assert len(reloaded) == 3
+    assert [t.id for t in reloaded.values()] == ["task_2", "task_3", "task_4"]
+
+
+def test_history_store_concurrency(tmp_path: Path) -> None:
+    import concurrent.futures
+
+    history_file = tmp_path / "concurrent_history.jsonl"
+    store = HistoryStore(file_path=history_file, max_entries=100)
+
+    def write_task(idx: int) -> None:
+        tid = f"task_thread_{idx}"
+        store.set(TaskStatus(
+            id=tid,
+            task=f"Thread task {idx}",
+            status="running",
+            started_at=float(idx),
+        ))
+        store.update(tid, status="completed", report=f"Report {idx}")
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        futures = [executor.submit(write_task, i) for i in range(40)]
+        for f in concurrent.futures.as_completed(futures):
+            f.result()
+
+    assert len(store) == 40
+    # Verify file integrity by reloading
+    reloaded = HistoryStore(file_path=history_file, max_entries=100)
+    assert len(reloaded) == 40
+    for i in range(40):
+        t = reloaded.get(f"task_thread_{i}")
+        assert t is not None
+        assert t.status == "completed"
+        assert t.report == f"Report {i}"
+
+
+def test_history_store_corrupted_lines_resilience(tmp_path: Path) -> None:
+    history_file = tmp_path / "corrupt_history.jsonl"
+    history_file.write_text(
+        '{"id": "valid_1", "task": "T1", "status": "completed", "started_at": 1.0}\n'
+        'NOT VALID JSON LINE\n'
+        '{"partial": true}\n'
+        '{"id": "valid_2", "task": "T2", "status": "completed", "started_at": 2.0}\n',
+        encoding="utf-8",
+    )
+    store = HistoryStore(file_path=history_file, max_entries=10)
+    assert len(store) == 2
+    assert "valid_1" in store
+    assert "valid_2" in store
+

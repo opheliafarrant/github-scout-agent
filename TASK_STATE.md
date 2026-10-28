@@ -3,7 +3,7 @@
 ## 1. Task Foundation
 - True Goal: 建立只读、有证据支持的 GitHub Scout Agent，并通过受限 Agent Loop 完成公开仓库候选发现、证据补充、透明对比与可核验推荐报告。
 - Current Stage: S4 验收与归档
-- Active Mainline: T52 KNOWN_PROJECTS 兜底与文档漂移修复归档（已通过 184 项回归）。
+- Active Mainline: T53 Web UI 历史记录本地持久化与并发安全治理归档（188 项全量回归通过）。
 
 ## 2. Frozen Baselines and Inline Evidence
 - F1 Fact Baseline (客观状态与实测结论):
@@ -25,7 +25,8 @@
   - F1-16: V1.1 正式版本能力固化：搜索响应精简至 18 字段使单次搜索预算从 ~50KB 降至 ~3KB；模型请求具备指数退避重试；Web UI 支持 SSE 实时事件流与一键导出 Markdown (.md)；全部 184 项测试通过 [E3: 184 passed]。
   - F1-17: 远程仓库与版本拓扑校验 [E3]: opheliafarrant/github-scout-agent (Private)；Tag `v1.0.0` 锚定 `df3b4ce`，Tag `v1.1.0` 锚定 `71802a9` (含功能冻结 `c32d17f`)；主分支 `master` 持续演进维保提交 (`8641de5` 预算调优、`359c050` 部署同步、`13773de` T50 文档)；全量审计零凭据泄露。
   - F1-18: 开源发布准备就绪 [E3]: 根目录配置标准 Apache-2.0 LICENSE 与 NOTICE；pyproject.toml 补齐打包元数据；README 相对路径及徽章修复完成；docs/RELEASE_NOTES_v1.1.0.md 就绪；184 项离线测试全绿。
-  - F1-19: KNOWN_PROJECTS 兜底与文档漂移修复固化 [E3: 184 passed, 1 deselected, 1 warning in 5.24s]：新增 `get_known_repository` 工具（白名单 cline/aider/openhands/swe-agent/mini-swe-agent，规范化小写无分隔符、不区分大小写，绕过搜索直达规范仓库并占用一个候选）；工具注册增至 7 个；修复 4 处文档漂移（registry docstring 五→七、get_public_readme 截断 5000→12000、README 架构图工具名与缺失工具、测试计数 176→184）。
+  - F1-19: KNOWN_PROJECTS 兜底与文档漂移修复固化 [E3: 184 passed, 1 deselected, 1 warning in 5.24s]：新增 `get_known_repository` 工具（白名单 cline/aider/openhands/swe-agent/mini-swe-agent，规范化小写无分隔符、不区分大小写，绕过搜索直达规范仓库并占用一个候选）；工具注册增至 7 个；修复 4 处文档漂移。
+  - F1-20: Web UI 历史记录本地持久化与并发安全固化 [E3: 188 passed, 1 deselected in 5.34s]：引入 HistoryStore 抽象，支持本地 JSONL 原子持久化（.scout/web_history.jsonl），threading.Lock 互斥保护多工作线程读写，uuid4 随机熵防止 task_id 碰撞，FIFO 淘汰上限 100 条杜绝内存泄漏；覆盖重启重载、容量限制、并发多线程与损坏行自愈单测。
 - F2 Decision Baseline (已批准架构与决策边界):
   - F2-01 (D1): CLI 与本地 Web UI (FastAPI+SSE) 双入口；不采用重型框架与桌面端安装包。
   - F2-02 (D2): 严格只读与公开边界；支持无 Token (60次/h) 与用户只读 Token (5000次/h)；Token 不进模型/日志/报告/Git。
@@ -38,9 +39,10 @@
   - F3-Release-1.1 (Current Release Anchor): `71802a9` (Git Tag `v1.1.0` 正式版基线，含功能冻结 `c32d17f`)。
   - F3-Master-Dev: `master` 分支头，承载后发布阶段维保提交与文档迭代；后续 Agent 严禁将 master 提交与已发布的冻结 Tag 混淆。
 ## 3. Current Engineering Flow and Impediments
-- Current Impediment / Stop Point: 无阻碍。T52 KNOWN_PROJECTS 兜底与文档漂移修复已完成，全量回归 184 通过。
+- Current Impediment / Stop Point: 无阻碍。T53 Web UI 历史记录持久化与并发治理已完成，全量回归 188 通过。
+- [x] T53: Web UI 历史记录本地持久化与并发安全治理：实现 HistoryStore、互斥锁、UUID task_id 与 JSONL 存储，新增 4 个单测，回归通过 [E3: 188 passed]。
+- [x] T52: KNOWN_PROJECTS 兜底与文档漂移修复：新增 get_known_repository 工具、工具注册 5→7、README 架构图与 docstring 漂移修复 [E3: 184 passed]。
 - [x] T51: 正式开源发布准备、Apache License 2.0 落地、README 链接与徽章修正、Release Notes 编制与元数据梳理。
-- [x] T52: KNOWN_PROJECTS 兜底与文档漂移修复：新增 get_known_repository 工具、工具注册 5→7、README 架构图与 docstring 漂移修复、测试计数 176→184 全量回归通过 [E3: 184 passed, 1 deselected]。
 - [x] T50: 完成正式发布文档规范化、Git版本记录校准、README/CHANGELOG/CONTRIBUTING 建设与远程同步。
 - [x] T49: GitHub 私有仓库首次部署、凭证审计与远程一致性核验完成 -> Remote `origin` @ `opheliafarrant/github-scout-agent` (Private, tags `v1.0.0`, `v1.1.0`)。
 - [x] T48: 完成 V1.1 正式版本冻结、Web 成果导出功能与稳定基线归档 -> Git Tag `v1.1.0`。

@@ -51,7 +51,7 @@ We follow a strict, evidence-based branching model to ensure baseline stability:
 Every pull request or commit must pass the full offline test suite:
 
 ```powershell
-# Run the complete offline test suite (184 tests)
+# Run the complete offline test suite (188 tests)
 python -m pytest -m "not live_github" -q
 
 # Test the FastAPI Web dashboard integration
