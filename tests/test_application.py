@@ -13,8 +13,18 @@ from github_scout_agent.application import (
     requires_native_tool_calling_evidence,
     run_research_task,
 )
+from datetime import datetime, timezone
+
 from github_scout_agent.agent_loop import AgentRunResult
-from github_scout_agent.github_models import ToolError, ToolResult
+from github_scout_agent.report_validator import (
+    CODE_FABRICATED_README,
+    CODE_IMMATURE_RECOMMENDATION,
+    CODE_METADATA_ONLY_VERDICT,
+    CODE_UNVERIFIED_RECOMMENDATION,
+    Completeness,
+    Finding,
+)
+from github_scout_agent.github_models import ReadmeEvidence, RepositoryRecord, SourceRef, ToolError, ToolResult
 from github_scout_agent.budget import RequestBudget
 from github_scout_agent.github_api import GitHubRestClient
 from github_scout_agent.model_client import OpenAICompatibleClient
@@ -254,7 +264,7 @@ def test_task_language_constraints_reach_production_search(task, expected_langua
         } for language in ("Python", "TypeScript", "Go", "Swift", None)]
         return httpx.Response(200, json={"items": items, "total_count": len(items)}, request=request)
 
-    budget = RequestBudget(max_candidates=3, max_model_calls=5, max_github_requests=8)
+    budget = RequestBudget(max_candidates=3, max_model_calls=3, max_github_requests=8)
     with OpenAICompatibleClient(
         base_url="https://model.example.test/v1", model="mock-model",
         api_key=SecretStr("offline-language-test-key"), budget=budget,
@@ -285,6 +295,10 @@ def test_requires_readme_evidence_on_readme_keywords() -> None:
     assert requires_native_tool_calling_evidence("find tools with detailed README documentation") is True
     assert requires_native_tool_calling_evidence("find tools with python documentation") is True
     assert requires_native_tool_calling_evidence("find small python CLI tools") is False
+    # A Chinese recommendation request asks for a conclusion about projects, so it
+    # needs the same README evidence an explicit "readme" keyword would demand.
+    assert requires_native_tool_calling_evidence("推荐一个扫描件 PDF 表格结构化方案") is True
+    assert requires_native_tool_calling_evidence("帮我挑一个生产可用的 RAG 框架") is True
 
 
 def test_render_mvp_report_on_rate_limited_termination() -> None:
@@ -679,3 +693,325 @@ def test_search_tool_description_guides_maturity_sorting() -> None:
         assert "stars:>50" in desc
 
 
+
+
+# -- T63 report grounding gate --------------------------------------------
+# The rendered report must downgrade on claims the session cannot support,
+# including Chinese reports and bare brand names with no inspected repository.
+
+def test_chinese_ungrounded_recommendation_triggers_alert_and_partial() -> None:
+    final_text = (
+        "## 1. 已核实事实\n\n"
+        "- [octo/demo](https://github.com/octo/demo):\n"
+        "  - 状态：完全匹配（Python，10 Stars）\n\n"
+        "## 4. 最终推荐\n\n"
+        "推荐 https://github.com/langchain-ai/langchain 作为首选方案。\n"
+    )
+    result = AgentRunResult(
+        status="completed",
+        termination_reason="model_finalized",
+        final_text=final_text,
+        tool_results=[],
+        budget={"accepted_candidate_count": 1, "accepted_candidate_ids": ["octo/demo"]},
+        evidence_complete=True,
+    )
+    report = render_mvp_report("寻找 RAG 框架", result)
+    assert "- Completeness: partial" in report
+    assert (
+        "- Evidence Grounding Alert: Unverified repository claims detected (langchain-ai/langchain)"
+        in report
+    )
+
+
+def test_verdict_without_inspected_repository_triggers_attribution_alert() -> None:
+    final_text = (
+        "## 1. 已核实事实\n\n"
+        "- [octo/demo](https://github.com/octo/demo): 状态：完全匹配\n\n"
+        "## 4. 最终推荐\n\n"
+        "- Genie: Verified Match\n"
+    )
+    result = AgentRunResult(
+        status="completed",
+        termination_reason="model_finalized",
+        final_text=final_text,
+        tool_results=[],
+        budget={"accepted_candidate_count": 1, "accepted_candidate_ids": ["octo/demo"]},
+        evidence_complete=True,
+    )
+    report = render_mvp_report("find frameworks", result)
+    assert "- Completeness: partial" in report
+    assert "Evidence Attribution Alert: Claims asserted without any repository inspected" in report
+    assert "(Genie)" in report
+
+
+def test_report_uses_recorded_investigated_whitelist_over_derived_candidates() -> None:
+    final_text = (
+        "## 4. Final Recommendation\n\n"
+        "Recommend https://github.com/octo/demo as the primary choice.\n"
+    )
+    result = AgentRunResult(
+        status="completed",
+        termination_reason="model_finalized",
+        final_text=final_text,
+        tool_results=[],
+        budget={"accepted_candidate_count": 1},
+        evidence_complete=True,
+        investigated_repositories=["octo/demo"],
+    )
+    report = render_mvp_report("find frameworks", result)
+    assert "- Completeness: complete" in report
+    assert "Evidence Grounding Alert" not in report
+
+def test_maturity_alert_downgrades_report_to_partial() -> None:
+    result = AgentRunResult(
+        status="completed",
+        termination_reason="model_finalized",
+        final_text=(
+            "## 4. Final Recommendation\n\n"
+            "- [octo/toy](https://github.com/octo/toy): Status: Verified Match\n"
+        ),
+        tool_results=[],
+        budget={"accepted_candidate_count": 1},
+        evidence_complete=True,
+        investigated_repositories=["octo/toy"],
+        findings=[Finding(code=CODE_IMMATURE_RECOMMENDATION, subjects=("octo/toy",))],
+    )
+
+    report = render_mvp_report("find frameworks", result)
+
+    assert "- Completeness: partial" in report
+    assert (
+        "Maturity Alert: Immature repositories recommended without a caveat (octo/toy)" in report
+    )
+    assert "Fewer than 50 stars and less than 6 months old" in report
+
+
+def test_fabricated_evidence_claim_downgrades_report_and_renders_alert() -> None:
+    result = AgentRunResult(
+        status="completed",
+        termination_reason="model_finalized",
+        final_text="The README content returned null for every candidate.",
+        tool_results=[],
+        budget={"accepted_candidate_count": 1},
+        evidence_complete=False,
+        investigated_repositories=["octo/toy"],
+        findings=[Finding(code=CODE_FABRICATED_README)],
+    )
+
+    report = render_mvp_report("find frameworks", result)
+
+    assert "- Completeness: partial" in report
+    assert "Evidence Fabrication Alert" in report
+    assert "never received" in report
+
+
+def test_report_renders_policy_notes_and_candidate_maturity_dates() -> None:
+    record = RepositoryRecord(
+        full_name="octo/toy",
+        html_url="https://github.com/octo/toy",
+        stargazers_count=3,
+        created_at=datetime(2026, 10, 1, tzinfo=timezone.utc),
+        pushed_at=datetime(2026, 10, 20, tzinfo=timezone.utc),
+    )
+    result = AgentRunResult(
+        status="completed",
+        termination_reason="model_finalized",
+        final_text="Evidence reviewed.",
+        tool_results=[
+            ToolResult(tool_name="get_public_repository", ok=True, data=record, request_count=1)
+        ],
+        budget={"accepted_candidate_count": 1},
+        evidence_complete=True,
+        investigated_repositories=["octo/toy"],
+        policy_notes=[
+            "The task asked for answers without tool evidence; this run applied the evidence-first policy instead."
+        ],
+    )
+
+    report = render_mvp_report("find frameworks", result)
+
+    assert "  - Created: 2026-10-01; last push: 2026-10-20" in report
+    assert "- Evidence Policy Note: The task asked for answers without tool evidence" in report
+
+
+
+def test_metadata_only_verdict_downgrades_report_and_renders_alert() -> None:
+    result = AgentRunResult(
+        status="completed",
+        termination_reason="model_finalized",
+        final_text=(
+            "## octo/tool\n- Qualification Verdict: Verified Match\n\n"
+            "## Final Recommendation\n1. Use octo/tool\n"
+        ),
+        tool_results=[],
+        budget={"accepted_candidate_count": 1},
+        evidence_complete=False,
+        investigated_repositories=["octo/tool"],
+        findings=[Finding(code=CODE_METADATA_ONLY_VERDICT, subjects=("octo/tool",))],
+    )
+
+    report = render_mvp_report("find a table extractor", result)
+
+    assert "- Completeness: partial" in report
+    assert "Verdict Evidence Alert" in report
+    assert "README was never requested (octo/tool)" in report
+    assert "Partial Match (metadata only)" in report
+
+
+def test_candidate_evidence_separates_readme_verified_rows_from_search_hits() -> None:
+    verified = RepositoryRecord(
+        full_name="deepset-ai/haystack",
+        html_url="https://github.com/deepset-ai/haystack",
+        stargazers_count=26876,
+        created_at=datetime(2019, 11, 14, tzinfo=timezone.utc),
+    )
+    toy = RepositoryRecord(
+        full_name="someone/toy-rag",
+        html_url="https://github.com/someone/toy-rag",
+        stargazers_count=1,
+        created_at=datetime(2026, 5, 31, tzinfo=timezone.utc),
+    )
+    readme = ReadmeEvidence(
+        status="truncated",
+        content="RAG framework",
+        source=SourceRef(
+            url="https://api.github.com/repos/deepset-ai/haystack/readme",
+            captured_at=datetime(2026, 10, 29, tzinfo=timezone.utc),
+        ),
+    )
+    result = AgentRunResult(
+        status="completed",
+        termination_reason="model_finalized",
+        final_text="Compared the README.",
+        tool_results=[
+            ToolResult(tool_name="get_public_repository", ok=True, data=toy, request_count=1),
+            ToolResult(tool_name="get_public_readme", ok=True, data=readme, request_count=1),
+            ToolResult(tool_name="get_public_repository", ok=True, data=verified, request_count=1),
+        ],
+        budget={"accepted_candidate_count": 1},
+        evidence_complete=True,
+        investigated_repositories=["deepset-ai/haystack"],
+    )
+
+    report = render_mvp_report("pick a production RAG framework", result)
+
+    assert "  - Evidence level: README truncated (fetched in this session)" in report
+    assert "  - Evidence level: metadata only — README not requested in this session (not investigated)" in report
+    # The investigated candidate is listed before a raw search hit.
+    assert report.index("deepset-ai/haystack") < report.index("someone/toy-rag")
+    assert "  - Maturity: immature (1 star(s)" in report
+
+
+def test_candidate_evidence_does_not_flag_mature_repositories_as_immature() -> None:
+    mature = RepositoryRecord(
+        full_name="run-llama/llama_index",
+        html_url="https://github.com/run-llama/llama_index",
+        stargazers_count=52726,
+        created_at=datetime(2022, 11, 2, tzinfo=timezone.utc),
+    )
+    result = AgentRunResult(
+        status="completed",
+        termination_reason="model_finalized",
+        final_text="Compared metadata.",
+        tool_results=[
+            ToolResult(tool_name="get_public_repository", ok=True, data=mature, request_count=1)
+        ],
+        budget={"accepted_candidate_count": 1},
+        evidence_complete=True,
+        investigated_repositories=["run-llama/llama_index"],
+    )
+
+    report = render_mvp_report("pick a production RAG framework", result)
+
+    assert "  - Maturity: immature" not in report
+    assert "  - Evidence level: metadata only" in report
+
+
+def test_renderer_renders_the_findings_the_run_recorded() -> None:
+    # One channel: the loop decides what is wrong with the report, the renderer
+    # prints that decision. Re-deriving the verdict here is how the report and the
+    # completeness flag drifted apart in the first place.
+    result = AgentRunResult(
+        status="completed",
+        termination_reason="model_finalized",
+        final_text="## Final Recommendation\n\n1. Use octo/demo\n",
+        tool_results=[],
+        budget={"accepted_candidate_count": 1},
+        evidence_complete=False,
+        investigated_repositories=["octo/demo"],
+        findings=[Finding(code=CODE_IMMATURE_RECOMMENDATION, subjects=("octo/demo",))],
+    )
+
+    report = render_mvp_report("find agents", result)
+
+    assert "- Completeness: partial" in report
+    assert "Maturity Alert: Immature repositories recommended without a caveat (octo/demo)" in report
+    assert "Evidence Grounding Alert" not in report
+
+
+def test_renderer_renders_the_unverified_recommendation_alert() -> None:
+    result = AgentRunResult(
+        status="completed",
+        termination_reason="model_finalized",
+        final_text="## Final Recommendation\n\n1. Use octo/demo\n",
+        tool_results=[],
+        budget={"accepted_candidate_count": 1},
+        evidence_complete=False,
+        investigated_repositories=["octo/demo"],
+        findings=[
+            Finding(code=CODE_UNVERIFIED_RECOMMENDATION, subjects=("octo/demo",))
+        ],
+    )
+
+    report = render_mvp_report("find agents", result)
+
+    assert "- Completeness: partial" in report
+    assert "Evidence Level Alert: Repositories recommended from search metadata only (octo/demo)" in report
+
+
+def test_renderer_prints_why_a_graded_report_is_partial() -> None:
+    # A complete-looking header over a metadata-only shortlist is the failure
+    # mode: the body was honest, the label was not. The reason must travel with
+    # the label, not live only in a policy note further down.
+    result = AgentRunResult(
+        status="completed",
+        termination_reason="model_finalized",
+        final_text="## Final Recommendation\n\n- octo/demo: Partial Match (metadata only)\n",
+        tool_results=[],
+        budget={"accepted_candidate_count": 1, "max_candidates": 3},
+        evidence_complete=True,
+        investigated_repositories=["octo/demo"],
+        requested_options=12,
+        completeness=Completeness(
+            complete=False,
+            reasons=(
+                "the task asked for 12 options while the candidate budget compares at most 3 (system limit)",
+            ),
+        ),
+    )
+
+    report = render_mvp_report("find 12 agents", result)
+
+    assert (
+        "- Completeness: partial (the task asked for 12 options while the candidate "
+        "budget compares at most 3 (system limit))"
+    ) in report
+
+
+def test_renderer_keeps_a_verified_run_label_complete() -> None:
+    result = AgentRunResult(
+        status="completed",
+        termination_reason="model_finalized",
+        final_text="## Final Recommendation\n\n- octo/demo: Verified Match\n",
+        tool_results=[],
+        budget={"accepted_candidate_count": 1, "max_candidates": 3},
+        evidence_complete=True,
+        investigated_repositories=["octo/demo"],
+        requested_options=1,
+        completeness=Completeness(complete=True, reasons=()),
+    )
+
+    report = render_mvp_report("find one agent", result)
+
+    assert "- Completeness: complete" in report
+    assert "- Completeness: partial" not in report

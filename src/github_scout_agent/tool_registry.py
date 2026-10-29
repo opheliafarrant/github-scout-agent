@@ -21,7 +21,24 @@ class SearchArguments(BaseModel):
     sort: Literal["best_match", "stars", "forks", "help-wanted-issues", "updated"] = "best_match"
     order: Literal["asc", "desc"] = "desc"
     page: int = Field(default=1, ge=1)
-    per_page: int = Field(default=MAX_SEARCH_PER_PAGE, ge=1, le=MAX_SEARCH_PER_PAGE)
+    per_page: int = Field(default=MAX_SEARCH_PER_PAGE, ge=1)
+
+    @field_validator("per_page", mode="before")
+    @classmethod
+    def clamp_page_size(cls, value: Any) -> Any:
+        """Clamp the requested page size instead of failing the call.
+
+        Models routinely ask for 10/30/50 results per page. This MVP reads at
+        most MAX_SEARCH_PER_PAGE, and a rejected argument used to abort the whole
+        run (observed: 1.3 s, zero GitHub requests, no report), so the value is
+        clamped and the request still goes out with the MVP page size.
+        """
+
+        try:
+            requested = int(value)
+        except (TypeError, ValueError):
+            return value
+        return min(max(requested, 1), MAX_SEARCH_PER_PAGE)
 
     @field_validator("query")
     @classmethod
@@ -180,7 +197,8 @@ class ToolRegistry:
         try:
             validated = definition.arguments_model.model_validate(raw_arguments)
         except ValidationError as exc:
-            return self._failure(name, "invalid_arguments", self._safe_validation_message(exc), "input")
+            message = self._safe_validation_message(exc, definition.arguments_model)
+            return self._failure(name, "invalid_arguments", message, "input")
         client_before = getattr(definition.handler, "client", None)
         before = client_before.budget.github_requests_used if client_before else None
         try:
@@ -220,10 +238,17 @@ class ToolRegistry:
         return client.budget.github_requests_used - before
 
     @staticmethod
-    def _safe_validation_message(error: ValidationError) -> str:
+    def _safe_validation_message(
+        error: ValidationError,
+        model: type[BaseModel],
+    ) -> str:
         first = error.errors()[0] if error.errors() else {}
         location = ".".join(str(item) for item in first.get("loc", ()))
-        return f"invalid tool argument: {location or 'arguments'}"
+        accepted = ", ".join(model.model_fields)
+        return (
+            f"invalid tool argument: {location or 'arguments'} — "
+            f"accepted arguments: {accepted}"
+        )
 
     @staticmethod
     def _failure(name: str, code: str, message: str, category: str) -> ToolResult:
@@ -256,6 +281,9 @@ def build_github_tool_registry(client: GitHubRestClient) -> ToolRegistry:
             "topics, and URL for each match. Use first to discover candidate repositories. "
             "For production framework/library evaluation, use sort='stars' or include qualifiers like 'stars:>50' "
             "to prioritize mature and maintained projects over low-quality or 0-star toy repos. "
+            "Search matches name, description, and topics, so repositories that paste a whole README into their "
+            "description can swamp a broad keyword query: add 'in:name,description' plus a 'stars:>N' floor when "
+            "shortlisting. Descriptions are truncated to 400 characters; call get_public_repository for full metadata. "
             "If results are few or irrelevant, try shorter or alternative queries."
         ),
         arguments_model=SearchArguments,
@@ -269,7 +297,15 @@ def build_github_tool_registry(client: GitHubRestClient) -> ToolRegistry:
     ))
     registry.register(ToolDefinition(
         name="get_known_repository",
-        description="Directly look up a curated, well-known open-source project by its common name, bypassing GitHub search (which can miss recently renamed projects). Known names: cline, aider, openhands, swe-agent, mini-swe-agent. Use when a project you expect does not appear in search_public_repositories results. Accepts the project as a candidate and counts once against the candidate budget.",
+        description=(
+            "Directly look up one of FIVE curated coding-agent projects by its common name, bypassing GitHub search "
+            "(which can miss recently renamed projects). The complete list is: cline, aider, openhands, swe-agent, "
+            "mini-swe-agent — it covers nothing else, so it is not a way to resolve any other project name (LangChain, "
+            "LlamaIndex, Haystack, ...) and every other name returns unknown_known_project. For any other project use "
+            "search_public_repositories with query 'repo:owner/name' (exact lookup) or the project name, then "
+            "get_public_repository to read its metadata. Accepts the resolved project as a candidate and counts once "
+            "against the candidate budget."
+        ),
         arguments_model=KnownRepositoryArguments,
         handler=_BoundHandler(client, client.get_known_repository, ("name",)),
     ))

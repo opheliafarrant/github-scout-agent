@@ -126,9 +126,13 @@ class RequestBudget:
         if size < 0 or response_size_so_far < 0:
             raise ValueError("response size cannot be negative")
         self.response_bytes_used += size
-        if response_size_so_far > self.max_response_bytes:
+        # Compare the cumulative total, not this response's own size. A
+        # per-response check let sequentially recorded responses sail past the
+        # ceiling: a measured run ended at 265,520 bytes against a 262,144
+        # limit while the snapshot still reported the dimension untouched.
+        if self.response_bytes_used > self.max_response_bytes:
             self._dimensions_exhausted.add("response_bytes")
-            raise BudgetExceeded("response_bytes", self.max_response_bytes, response_size_so_far)
+            raise BudgetExceeded("response_bytes", self.max_response_bytes, self.response_bytes_used)
 
     def take_candidates(self, count: int) -> tuple[int, bool]:
         if count < 0:

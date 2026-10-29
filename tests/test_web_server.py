@@ -25,6 +25,14 @@ def test_index_route(client: TestClient) -> None:
     assert "text/html" in response.headers["content-type"]
 
 
+def test_index_route_renders_a_scrollable_history_with_delete_controls(client: TestClient) -> None:
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "#history-list{overflow-y:auto" in response.text
+    assert "history-del" in response.text
+    assert "/api/history/" in response.text
+
 def test_config_route_unconfigured(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GITHUB_SCOUT_MODEL", raising=False)
     monkeypatch.delenv("GITHUB_SCOUT_MODEL_BASE_URL", raising=False)
@@ -121,6 +129,40 @@ def test_run_route_streaming_and_storage(client: TestClient, monkeypatch: pytest
     assert report_data["termination_reason"] == "model_finalized"
     assert report_data["feedback_trace"] == []
 
+
+def test_history_delete_removes_entry_and_persists(tmp_path: Path) -> None:
+    history_file = tmp_path / "web_history.jsonl"
+    store = HistoryStore(file_path=history_file, max_entries=10)
+    store.set(TaskStatus(id="keep", task="keep me", status="completed", started_at=1.0))
+    store.set(TaskStatus(id="drop", task="drop me", status="completed", started_at=2.0))
+
+    assert store.delete("drop") is True
+    assert store.delete("drop") is False
+    assert [status.id for status in store.values()] == ["keep"]
+
+    reloaded = HistoryStore(file_path=history_file, max_entries=10)
+    assert [status.id for status in reloaded.values()] == ["keep"]
+
+
+def test_history_delete_of_the_last_entry_removes_the_file(tmp_path: Path) -> None:
+    history_file = tmp_path / "web_history.jsonl"
+    store = HistoryStore(file_path=history_file, max_entries=10)
+    store.set(TaskStatus(id="only", task="only one", status="completed", started_at=3.0))
+
+    assert store.delete("only") is True
+    assert not history_file.exists()
+    assert len(HistoryStore(file_path=history_file, max_entries=10)) == 0
+
+
+def test_history_delete_route_removes_a_task(client: TestClient) -> None:
+    _store.set(TaskStatus(id="route-del", task="delete via api", status="completed", started_at=4.0))
+
+    response = client.delete("/api/history/route-del")
+
+    assert response.status_code == 200
+    assert response.json() == {"deleted": True, "id": "route-del"}
+    assert all(item["id"] != "route-del" for item in client.get("/api/history").json())
+    assert client.delete("/api/history/route-del").status_code == 404
 
 def test_report_route_not_found(client: TestClient) -> None:
     response = client.get("/api/report/nonexistent_id")

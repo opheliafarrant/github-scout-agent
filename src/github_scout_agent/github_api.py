@@ -71,6 +71,11 @@ _SEARCH_ITEM_FIELDS: set[str] = {
 }
 
 
+_MAX_DESCRIPTION_CHARS = 400
+_MAX_TOPICS = 16
+_MAX_TOPIC_CHARS = 50
+
+
 def _trim_search_payload(raw: object) -> dict[str, object]:
     """Keep only the fields from *raw* that the agent actually consumes."""
     if not isinstance(raw, Mapping):
@@ -83,7 +88,14 @@ def _trim_search_payload(raw: object) -> dict[str, object]:
             elif key == "owner" and isinstance(value, Mapping):
                 trimmed[key] = {"login": value.get("login")}
             elif key == "topics" and isinstance(value, list):
-                trimmed[key] = [t for t in value if isinstance(t, str)]
+                trimmed[key] = [t[:_MAX_TOPIC_CHARS] for t in value if isinstance(t, str)][:_MAX_TOPICS]
+            elif key == "description" and isinstance(value, str):
+                # A handful of repositories paste their entire README into the
+                # description field (measured: 229,789 bytes from one repo).
+                # Unclipped, three such hits exhaust the 256 KB response budget
+                # and abort the whole run with response_too_large before any
+                # candidate is read.
+                trimmed[key] = value[:_MAX_DESCRIPTION_CHARS]
             else:
                 trimmed[key] = value
     return trimmed
@@ -622,7 +634,9 @@ class GitHubRestClient:
             available = ", ".join(sorted(KNOWN_PROJECTS.values()))
             raise GithubApiError(
                 "unknown_known_project", "input",
-                f"'{name}' does not match a curated known project; known projects: {available}",
+                f"'{name}' does not match a curated known project; known projects: {available}. "
+                "For any other project, call search_public_repositories with query "
+                "'repo:owner/name' (exact) or the project name, then get_public_repository.",
             )
         owner, repo = slug.split("/", 1)
         return self.get_public_repository(owner=owner, repo=repo)

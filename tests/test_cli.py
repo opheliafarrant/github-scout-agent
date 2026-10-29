@@ -189,7 +189,7 @@ def test_run_production_assembly_uses_mock_transports(monkeypatch) -> None:
     monkeypatch.setattr("github_scout_agent.github_api.GitHubRestClient", MockGitHub)
     monkeypatch.setattr("github_scout_agent.model_client.OpenAICompatibleClient", MockModel)
 
-    result = runner.invoke(app, ["run", "find x", "--confirm-live"])
+    result = runner.invoke(app, ["run", "find x", "--confirm-live", "--max-model-calls", "3"])
 
     assert result.exit_code == 0
     assert "Status: completed" in result.stdout

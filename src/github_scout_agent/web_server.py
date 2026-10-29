@@ -163,6 +163,16 @@ class HistoryStore:
         with self._lock:
             return list(self._tasks.values())
 
+    def delete(self, task_id: str) -> bool:
+        with self._lock:
+            if self._tasks.pop(task_id, None) is None:
+                return False
+            if self._tasks:
+                self._persist_locked()
+            else:
+                self._file_path.unlink(missing_ok=True)
+            return True
+
     def clear(self) -> None:
         with self._lock:
             self._tasks.clear()
@@ -579,6 +589,13 @@ async def history() -> list[dict]:
         {"id": s.id, "task": s.task, "status": s.status, "termination_reason": s.termination_reason}
         for s in _store.values()
     ]
+
+
+@web_app.delete("/api/history/{task_id}")
+async def delete_history(task_id: str) -> dict:
+    if not _store.delete(task_id):
+        raise HTTPException(status_code=404, detail="not_found")
+    return {"deleted": True, "id": task_id}
 
 
 @web_app.get("/api/report/{task_id}")

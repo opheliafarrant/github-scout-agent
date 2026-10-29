@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
-from collections.abc import Iterable
+from datetime import datetime
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -14,7 +14,16 @@ from pydantic import BaseModel, ConfigDict, Field
 from .agent_models import AgentMessage, AssistantResponse, ModelCallError, ModelProtocolError, ToolCall
 from .budget import BudgetExceeded, RequestBudget
 from .events import AgentEvent, EventRecorder
+from .evidence_ledger import EvidenceLedger, RepoEvidence, build_ledger
 from .github_models import ToolError, ToolResult
+from .report_validator import (
+    Completeness,
+    Finding,
+    _claimed_readme_evidence,
+    assess_completeness,
+    excluded_repositories,
+    validate_report,
+)
 from .tool_registry import ToolRegistry
 
 
@@ -32,6 +41,7 @@ class ModelAdapter(Protocol):
 @dataclass(frozen=True)
 class AgentLoopConfig:
     max_protocol_retries: int = 1
+    max_argument_retries: int = 3
     max_repeated_actions: int = 1
     max_rate_limit_retries: int = 2
     finalization_reserve_calls: int = 0
@@ -53,6 +63,20 @@ class AgentRunResult(BaseModel):
     evidence_complete: bool | None = None
     evidence_gaps: list[str] = Field(default_factory=list)
     feedback_trace: list[dict[str, object]] = Field(default_factory=list)
+    investigated_repositories: list[str] = Field(default_factory=list)
+    evidence: list[RepoEvidence] = Field(default_factory=list)
+    policy_notes: list[str] = Field(default_factory=list)
+    findings: list[Finding] = Field(default_factory=list)
+    requested_options: int | None = None
+    completeness: Completeness | None = None
+
+    def flagged(self, code: str) -> tuple[str, ...]:
+        """Subjects of the finding with this code, if the run produced one."""
+
+        for finding in self.findings:
+            if finding.code == code:
+                return finding.subjects
+        return ()
 
 
 class AgentLoop:
@@ -70,9 +94,15 @@ class AgentLoop:
         self.budget = budget
         self.events = events or EventRecorder()
         self.config = config or AgentLoopConfig()
+        self._user_task = ""
+        self._verification_nudges = 0
+        self._readme_claim_nudges = 0
+        self._search_streak_nudges = 0
+        self._empty_search_streak = 0
 
     def run(self, user_task: str) -> AgentRunResult:
         self.budget.start_task()
+        self._user_task = user_task
         messages = [AgentMessage(role="user", content=user_task)]
         # Always include core research quality policy.
         policy_lines = [
@@ -119,9 +149,27 @@ class AgentLoop:
                     "Do not claim completeness when READMEs have not been fetched for the recommended candidates."
                 )
         policy_lines.append(
-            "Do not recommend candidates without evidence for the requested functional constraints. "
-            "If a repo does not clearly satisfy the user's requirements, reject it with a specific reason "
-            "rather than including it and hoping the user won't notice."
+            "Evidence-based rejection: reject a candidate when its metadata already proves it cannot meet a hard "
+            "requirement (wrong language, wrong platform, a text-layer tool for scanned input). The reason must cite "
+            "the concrete field that disqualifies it. This is never permission to skip investigation: if a candidate "
+            "might satisfy the requirement, fetch its README before judging it."
+        )
+        policy_lines.append(
+            "Capability queries: when the task describes a capability (a library that can do X for input type Y), "
+            "search for the capability, modality and output artifact — never for the name of a library you already "
+            "know. A known library is a verification target, not a query; search it by name only once you decide it "
+            "is worth verifying."
+        )
+        policy_lines.append(
+            "Never conclude 'no qualifying candidates' while the budget still allows work and no README has been "
+            "fetched. An empty conclusion without one inspected candidate is a failure, not an answer: verify at "
+            "least one concrete candidate before declaring the search empty."
+        )
+        policy_lines.append(
+            "Investigation depth before an empty answer: one rejected candidate does not prove the ecosystem lacks "
+            "options. When the budget still allows it, read READMEs for at least two distinct candidates and try a "
+            "second query formulation (capability, platform, or artifact wording) before stating that nothing "
+            "qualifies. An empty answer built on a single rejection is a weak conclusion and must be labelled as such."
         )
         policy_lines.append(
             "Candidate qualification and exclusion: Evaluate whether candidate projects genuinely meet "
@@ -134,10 +182,16 @@ class AgentLoop:
             "Evidence-based comparison: For deep technical selection, verify concrete capabilities, strengths, and "
             "limitations from actual README documentation and metadata rather than superficial search snippets or Star counts."
         )
+        policy_lines.append(
+            "Tables are evidence too: never place a repository you did not inspect with tools into a candidate or "
+            "comparison table, not even marked 'metadata unavailable'. Prior knowledge belongs in Evidence Gaps / "
+            "Unverified Prior Knowledge only; candidate tables carry tool-derived rows exclusively."
+        )
         messages.append(AgentMessage(role="user", content=" ".join(policy_lines)))
         tool_results: list[ToolResult] = []
         repeated_actions: Counter[str] = Counter()
         protocol_errors = 0
+        argument_errors = 0
         consecutive_rate_limits = 0
         final_text: str | None = None
         termination_reason = "unknown"
@@ -165,6 +219,13 @@ class AgentLoop:
                 not finalization_done
                 and self.config.finalization_reserve_calls > 0
                 and self._has_evidence(tool_results)
+                # Never auto-finalize on search metadata alone while the budget
+                # still allows investigation: live runs ended after two model
+                # turns with zero READMEs and a "cannot recommend anything"
+                # report. The model gets a normal turn first, and the nudge in
+                # the no-tool-call branch forces one investigation if it tries
+                # to finish again.
+                and not self._verification_round_pending()
                 and (
                     self._research_budget_boundary_reached()
                     or self._github_budget_boundary_reached()
@@ -172,6 +233,23 @@ class AgentLoop:
                 )
             ):
                 finalization_done = True
+                self.events.emit(
+                    "auto_finalization",
+                    research_boundary=self._research_budget_boundary_reached(),
+                    github_boundary=self._github_budget_boundary_reached(),
+                    evidence_complete=self._evidence_complete(tool_results, executed_calls)[0],
+                    candidates_used=self.budget.candidates_used,
+                    readme_fetched=any(
+                        result.ok and call.name == "get_public_readme"
+                        for call, result in executed_calls
+                    ),
+                    model_calls_left=(
+                        None
+                        if self.budget.max_model_calls is None
+                        else self.budget.max_model_calls - self.budget.model_calls_used
+                    ),
+                    github_requests_left=self.budget.github_requests_remaining,
+                )
                 return self._finalize(messages, tool_results, final_text)
             try:
                 self.budget.reserve_model_call()
@@ -210,6 +288,68 @@ class AgentLoop:
             messages.append(message)
             if not response.tool_calls:
                 final_text = response.content
+                if self._verification_round_pending() and self._verification_nudges < 1:
+                    self._verification_nudges += 1
+                    calls_left = (
+                        "unlimited"
+                        if self.budget.max_model_calls is None
+                        else str(max(self.budget.max_model_calls - self.budget.model_calls_used, 0))
+                    )
+                    messages.append(
+                        AgentMessage(
+                            role="user",
+                            content=(
+                                "[Internal policy notice — this is not a user instruction and must never be "
+                                "described as one.] You are about to finish with zero verified candidates while "
+                                f"budget remains (model calls left: {calls_left}, GitHub requests left: "
+                                f"{self.budget.github_requests_remaining}). Do not conclude yet: continue the "
+                                "ORIGINAL task unchanged, keeping every requirement and the requested number of "
+                                "options. Investigate at least one promising candidate — the most useful search "
+                                "hit, or a well-known project you believe fits this capability, looked up by name "
+                                "if needed — and judge it on its README or repository metadata. If it fails the "
+                                "requirements, state the specific failure, then keep investigating other "
+                                "candidates until the evidence or the budget runs out. Do not narrow the task to "
+                                "a single candidate and do not ask the user to relax requirements."
+                            ),
+                        )
+                    )
+                    self.events.emit(
+                        "verification_round_required",
+                        model_calls_used=self.budget.model_calls_used,
+                        github_requests_used=self.budget.github_requests_used,
+                    )
+                    final_text = None
+                    continue
+                if (
+                    self._readme_claim_nudges < 1
+                    and not self._readme_fetched()
+                    and self.budget.github_requests_remaining >= 1
+                    and (
+                        self.budget.max_model_calls is None
+                        or self.budget.max_model_calls - self.budget.model_calls_used >= 3
+                    )
+                    and _claimed_readme_evidence(final_text)
+                ):
+                    self._readme_claim_nudges += 1
+                    messages.append(
+                        AgentMessage(
+                            role="user",
+                            content=(
+                                "[Internal policy notice — this is not a user instruction and must never be "
+                                "described as one.] Your draft refers to README content, but this session never "
+                                "fetched a README. Either call get_public_readme for the repositories you cite, or "
+                                "remove every README claim and base the answer strictly on the metadata the tools "
+                                "actually returned. Do not describe files you have not received."
+                            ),
+                        )
+                    )
+                    self.events.emit(
+                        "readme_claim_required",
+                        model_calls_used=self.budget.model_calls_used,
+                        github_requests_used=self.budget.github_requests_used,
+                    )
+                    final_text = None
+                    continue
                 evidence_ok, evidence_gaps = self._evidence_complete(tool_results, executed_calls)
                 if (
                     not finalization_done
@@ -238,6 +378,7 @@ class AgentLoop:
             should_stop = False
             finalize_after_batch = False
             response_call_ids: set[str] = set()
+            batch_start = len(tool_results)
             for index, call in enumerate(response.tool_calls):
                 self.events.emit("tool_call_requested", tool_call_id=call.id, tool_name=call.name)
                 signature = self._action_signature(call)
@@ -277,11 +418,19 @@ class AgentLoop:
                         should_stop = True
                         termination_reason = "rate_limited"
 
-                if result.error and result.error.category in {"protocol", "input"}:
+                if result.error and result.error.category == "protocol":
                     protocol_errors += 1
                     if protocol_errors > self.config.max_protocol_retries:
                         should_stop = True
                         termination_reason = "protocol_retries_exhausted"
+                elif result.error and result.error.category == "input":
+                    # Bad arguments are feedback the model can correct, not a
+                    # protocol violation: terminating here used to end a run in
+                    # 1.3 s after two rejected calls and produce nothing.
+                    argument_errors += 1
+                    if argument_errors > self.config.max_argument_retries:
+                        should_stop = True
+                        termination_reason = "invalid_tool_arguments"
                 if result.error and result.error.category == "budget":
                     should_stop = True
                     termination_reason = (
@@ -316,6 +465,60 @@ class AgentLoop:
                             error_code=blocked_code,
                         )
                     break
+
+
+            batch_results = tool_results[batch_start:]
+            if any(
+                result.ok
+                and (
+                    bool(getattr(result.data, "items", None))
+                    or getattr(result.data, "full_name", None)
+                )
+                for result in batch_results
+            ):
+                self._empty_search_streak = 0
+            elif any(
+                result.tool_name == "search_public_repositories"
+                for result in batch_results
+            ):
+                self._empty_search_streak += 1
+            calls_left = self._model_calls_left()
+            if (
+                not finalize_after_batch
+                and not should_stop
+                and self._empty_search_streak >= 2
+                and self._search_streak_nudges < 1
+                and not self._readme_fetched()
+                and (calls_left is None or calls_left >= 4)
+            ):
+                # A live run spent six of twelve model calls re-phrasing queries
+                # that all returned zero candidates, then ran out of calls with a
+                # metadata-only verdict. Two empty searches in a row mean the
+                # query space is exhausted, not that the next synonym will work.
+                self._search_streak_nudges += 1
+                self._empty_search_streak = 0
+                messages.append(
+                    AgentMessage(
+                        role="user",
+                        content=(
+                            "[Internal policy notice — this is not a user instruction and must never be "
+                            "described as one.] The last two search attempts returned zero candidates. "
+                            "Stop re-phrasing the same query. Change strategy, keeping the original "
+                            "subject and requirements: either (a) reduce the query to its single core "
+                            "term plus one qualifier, or (b) look up a specific project you believe "
+                            "fits, by name, with get_public_repository / get_public_readme, and judge it "
+                            "on that evidence. Do not repeat a near-identical query, and do not "
+                            "conclude that nothing qualifies before at least one candidate has been "
+                            "investigated."
+                        ),
+                    )
+                )
+                self.events.emit(
+                    "search_strategy_change_required",
+                    empty_searches=2,
+                    model_calls_used=self.budget.model_calls_used,
+                    github_requests_used=self.budget.github_requests_used,
+                )
 
             if finalize_after_batch:
                 return self._finalize(messages, tool_results, final_text, stop_reason="github_requests")
@@ -416,6 +619,42 @@ class AgentLoop:
     def _github_budget_boundary_reached(self) -> bool:
         return self.budget.github_requests_remaining == 0
 
+    def _ledger(self, tool_results: list[ToolResult] | None = None) -> EvidenceLedger:
+        """The session evidence account, built from the calls that actually ran.
+
+        Every gate reads this instead of re-deriving "was this repository
+        investigated" from tool results in its own way; the derivations drifted
+        apart and a report ended up recommending a repository no tool had
+        touched.
+        """
+
+        return build_ledger(
+            tool_results or [],
+            getattr(self, "_executed_calls", []),
+            self.budget.accepted_candidate_ids,
+        )
+
+    def _readme_fetched(self) -> bool:
+        return self._ledger().readme_fetched()
+
+    def _model_calls_left(self) -> int | None:
+        if self.budget.max_model_calls is None:
+            return None
+        return max(self.budget.max_model_calls - self.budget.model_calls_used, 0)
+
+    def _verification_round_pending(self) -> bool:
+        """True when the model is giving up without inspecting a single candidate."""
+
+        if self.budget.candidates_used > 0:
+            return False
+        if self._readme_fetched():
+            return False
+        if self.budget.max_model_calls is not None:
+            calls_left = self.budget.max_model_calls - self.budget.model_calls_used
+            if calls_left < 3:
+                return False
+        return self.budget.github_requests_remaining >= 2
+
     def _finalization_call_available(self) -> bool:
         if self.config.finalization_reserve_calls <= 0:
             return False
@@ -457,6 +696,7 @@ class AgentLoop:
         self,
         tool_results: list[ToolResult],
         executed_calls: list[tuple[ToolCall, ToolResult]],
+        report_text: str | None = None,
     ) -> tuple[bool, list[str]]:
         required_languages = self._required_languages()
         required_language_keys = {language.casefold() for language in required_languages}
@@ -540,6 +780,15 @@ class AgentLoop:
             identity: record for identity, record in target_candidates.items() if identity not in out_of_scope
         }
 
+        # A candidate the finished report explicitly excludes was judged out,
+        # not recommended: reading its README was an alternative, not an extra
+        # obligation. Charging the run for it marked a correct report partial.
+        excluded = (
+            excluded_repositories(report_text, target_candidates)
+            if report_text
+            else set()
+        )
+
         gaps: list[str] = []
         for identity, record in target_candidates.items():
             if required_languages:
@@ -549,7 +798,7 @@ class AgentLoop:
                     and language.casefold() in required_language_keys
                 ) and identity not in language_verified:
                     gaps.append(f"language not verified: {identity}")
-            if self.config.require_candidate_readme:
+            if self.config.require_candidate_readme and identity not in excluded:
                 if identity not in readme_attempts:
                     gaps.append(f"README not checked: {identity}")
                 elif identity not in readme_available:
@@ -582,14 +831,35 @@ class AgentLoop:
             "If fewer candidates qualify than requested, recommend only qualifying ones and explain why others were excluded. "
             "If no candidates qualify, state this clearly with the search evidence; do not fabricate recommendations.",
         ]
-        investigated = self._investigated_repository_ids(tool_results)
-        if investigated:
+        described = self._ledger(tool_results).whitelist()
+        if described:
             prompt_lines.append(
-                f"INVESTIGATED CANDIDATES WHITELIST: [{', '.join(investigated)}]. "
+                f"INVESTIGATED CANDIDATES WHITELIST: [{'; '.join(described)}]. "
                 "STRICT GROUNDING RULES: "
                 "1) You may ONLY declare a repository as 'Verified Match' or 'Partial Match' if it is in the INVESTIGATED CANDIDATES WHITELIST above and supported by actual tool evidence. "
                 "2) Any repository NOT in this whitelist was NEVER inspected with tools in this session. You MUST NOT mark uninspected repositories as 'Verified Match' or recommend them as primary verified choices. "
                 "3) If you mention well-known projects from pre-trained memory that were not investigated via tools, you MUST explicitly categorize them under Evidence Gaps as 'Unverified Prior Knowledge' and declare that their current capabilities were not verified in this session."
+            )
+            prompt_lines.append(
+                "Maturity grading: report Stars and creation date for every candidate. A candidate with fewer than "
+                "50 stars AND created less than 6 months ago is 'Maturity: immature'; list those under a separate "
+                "heading 'Immature options (not recommended for production)' and never present one as the primary "
+                "recommendation for production use."
+            )
+            prompt_lines.append(
+                "Verdicts need their evidence: label a repository 'Verified Match' only when this session "
+                "actually fetched its README. A candidate judged from metadata alone is 'Partial Match "
+                "(metadata only)' — say explicitly that its README was not fetched and make no capability "
+                "claim beyond the metadata fields that were returned."
+            )
+            prompt_lines.append(
+                "Prior knowledge is not a recommendation: any project you know but did not inspect in this session "
+                "must be labelled 'Unverified Prior Knowledge' and must not appear in Final Recommendation as a "
+                "choice, nor carry capability, licence or readiness claims."
+            )
+            prompt_lines.append(
+                "If the task asks for more candidates than this whitelist contains or than the candidate budget "
+                "allows, state the shortfall explicitly instead of silently presenting fewer."
             )
         else:
             prompt_lines.append(
@@ -600,9 +870,11 @@ class AgentLoop:
             )
         if stop_reason == "rate_limited":
             prompt_lines.append(
-                "Note: Further repository research was stopped due to upstream GitHub API rate limiting. "
-                "Synthesize and present findings from the evidence acquired prior to rate limiting, "
-                "and clearly document the rate limit in Evidence Gaps."
+                "Note: Further repository research was stopped by upstream GitHub API rate limiting "
+                "before the remaining candidates could be read. Synthesize only the evidence acquired "
+                "prior to the limit, open Evidence Gaps with the rate limit itself, label every candidate "
+                "you could not read as 'Pending Verification (rate limited)', and do not describe README "
+                "contents or imply that README checks were performed for them."
             )
         elif stop_reason == "repeated_action_blocked":
             prompt_lines.append(
@@ -626,18 +898,54 @@ class AgentLoop:
         )
         messages.append(final_instruction)
         self.events.emit("finalization_started", model_call=self.budget.model_calls_used, stop_reason=stop_reason)
-        try:
-            response = self.model.complete(
-                messages=list(messages),
-                tools=self.tools.schemas(),
-                tool_choice="none",
-            )
-        except ModelCallError as exc:
-            self.events.emit("task_terminated", reason=exc.code, error_category=exc.category)
-            return self._result("terminated", exc.code, final_text, messages, tool_results)
-        except ModelProtocolError:
-            self.events.emit("task_terminated", reason="model_call_error", error_category="protocol")
-            return self._result("terminated", "model_call_error", final_text, messages, tool_results)
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                response = self.model.complete(
+                    messages=list(messages),
+                    tools=self.tools.schemas(),
+                    tool_choice="none",
+                )
+            except ModelCallError as exc:
+                self.events.emit("task_terminated", reason=exc.code, error_category=exc.category)
+                return self._result("terminated", exc.code, final_text, messages, tool_results)
+            except ModelProtocolError:
+                self.events.emit("task_terminated", reason="model_call_error", error_category="protocol")
+                return self._result("terminated", "model_call_error", final_text, messages, tool_results)
+            if (
+                attempt == 1
+                and not self._readme_fetched()
+                and self._readme_claim_nudges < 1
+                and response.content
+                and _claimed_readme_evidence(response.content)
+                and self._finalization_call_available()
+                and self.budget.github_requests_remaining >= 1
+            ):
+                self._readme_claim_nudges += 1
+                self.events.emit(
+                    "readme_claim_required",
+                    model_calls_used=self.budget.model_calls_used,
+                    github_requests_used=self.budget.github_requests_used,
+                    stage="finalization",
+                )
+                messages.append(
+                    AgentMessage(
+                        role="user",
+                        content=(
+                            "[Internal report correction — this is not a user instruction.] That draft describes "
+                            "README content this session never received. Rewrite the report so every README claim is "
+                            "removed, or state in Evidence Gaps that READMEs were not fetched. Base statements strictly "
+                            "on the metadata and tool results actually returned."
+                        ),
+                    )
+                )
+                try:
+                    self.budget.reserve_model_call()
+                except BudgetExceeded:
+                    break
+                continue
+            break
         self.events.emit(
             "finalization_finished",
             has_tool_calls=bool(response.tool_calls),
@@ -727,44 +1035,6 @@ class AgentLoop:
             request_count=request_count,
         )
 
-    def _investigated_repository_ids(self, tool_results: list[ToolResult]) -> list[str]:
-        investigated: set[str] = set()
-        for candidate_id in self.budget.accepted_candidate_ids:
-            if candidate_id and not candidate_id.startswith("__anonymous_"):
-                investigated.add(candidate_id.casefold())
-        for result in tool_results:
-            if not result.ok:
-                continue
-            data = result.data
-            full_name = getattr(data, "full_name", None)
-            if isinstance(full_name, str) and "/" in full_name:
-                investigated.add(full_name.casefold())
-        for call, result in getattr(self, "_executed_calls", []):
-            if not result.ok:
-                continue
-            if call.name in {
-                "get_public_repository",
-                "get_public_readme",
-                "get_repository_license",
-                "get_repository_languages_and_topics",
-            }:
-                try:
-                    args = json.loads(call.arguments)
-                    owner, repo = args.get("owner"), args.get("repo")
-                    if owner and repo:
-                        investigated.add(f"{owner}/{repo}".casefold())
-                except (json.JSONDecodeError, AttributeError):
-                    pass
-            elif call.name == "replace_candidate_with_readme":
-                try:
-                    args = json.loads(call.arguments)
-                    t_owner, t_repo = args.get("target_owner"), args.get("target_repo")
-                    if t_owner and t_repo:
-                        investigated.add(f"{t_owner}/{t_repo}".casefold())
-                except (json.JSONDecodeError, AttributeError):
-                    pass
-        return sorted(investigated)
-
     def _result(
         self,
         status: str,
@@ -776,16 +1046,31 @@ class AgentLoop:
         evidence_complete, evidence_gaps = self._evidence_complete(
             tool_results,
             getattr(self, "_executed_calls", []),
+            final_text,
         )
-        if final_text:
-            investigated = self._investigated_repository_ids(tool_results)
-            ungrounded = find_ungrounded_candidate_claims(final_text, investigated)
-            if ungrounded:
-                evidence_complete = False
-                for candidate in ungrounded:
-                    evidence_gaps.append(
-                        f"unverified candidate claimed as match or recommendation: {candidate}"
-                    )
+        ledger = self._ledger(tool_results)
+        validation = validate_report(
+            final_text,
+            ledger,
+            require_verdict_evidence=self.config.require_candidate_readme,
+        )
+        if validation.has_findings:
+            # Every rule reports through one channel: the run is not evidence
+            # complete and the report carries the sentence the rule produced.
+            evidence_complete = False
+            evidence_gaps.extend(validation.gap_messages())
+        requested_options = self._requested_options()
+        # One grading rule, fed by the ledger: alerts say whether the report
+        # overclaims; completeness says whether the run covered the request.
+        completeness = assess_completeness(
+            ledger,
+            findings=validation.findings,
+            accepted_candidates=self.budget.accepted_candidate_ids,
+            requested_options=requested_options,
+            max_candidates=self.budget.max_candidates,
+            status=status,
+            evidence_complete=evidence_complete,
+        )
         return AgentRunResult(
             status=status,
             termination_reason=termination_reason,
@@ -797,73 +1082,150 @@ class AgentLoop:
             evidence_complete=evidence_complete,
             evidence_gaps=evidence_gaps,
             feedback_trace=self.budget.feedback_trace(),
+            investigated_repositories=list(ledger.investigated()),
+            evidence=ledger.for_report(),
+            policy_notes=self._policy_notes(),
+            findings=list(validation.findings),
+            requested_options=requested_options,
+            completeness=completeness,
         )
 
+    def _requested_options(self) -> int | None:
+        """How many options the task text asked for, when it said so."""
 
-def extract_repo_slugs_from_text(s: str) -> set[str]:
-    slugs: set[str] = set()
-    for m in re.finditer(r"https?://(?:www\.)?github\.com/([A-Za-z0-9_-]+/[A-Za-z0-9_.-]+)", s):
-        slugs.add(m.group(1).rstrip(".").casefold())
-    stripped = re.sub(r"https?://[^\s\)]+", "", s)
-    for m in re.finditer(r"(?<![A-Za-z0-9_.-])([A-Za-z0-9_-]{1,39}/[A-Za-z0-9_.-]{1,100})(?![A-Za-z0-9_.-])", stripped):
-        slug = m.group(1).rstrip(".").casefold()
-        if not slug.startswith(("http/", "https/", "api/")):
-            slugs.add(slug)
-    return slugs
+        matches = [int(match.group(1)) for match in _REQUESTED_COUNT_RE.finditer(self._user_task)]
+        return max(matches) if matches else None
+
+    def _policy_notes(self) -> list[str]:
+        """Deterministic disclosures the report must carry regardless of model prose."""
+
+        notes: list[str] = []
+        task = self._user_task
+        if _requests_tool_free_answer(task) and self.budget.github_requests_used > 0:
+            notes.append(
+                "The task asked for answers without tool evidence; this run applied the evidence-first policy "
+                f"instead and spent {self.budget.github_requests_used} GitHub request(s) verifying candidates. "
+                "The findings below are tool-grounded, not recalled from memory."
+            )
+        requested = self._requested_options()
+        if requested is not None and requested > self.budget.max_candidates:
+            notes.append(
+                f"The task asked for {requested} options; the candidate budget compares at most "
+                f"{self.budget.max_candidates}. The shortfall is a system limit, not a search failure."
+            )
+        if _requests_readme_opt_out(task):
+            readme_count = sum(
+                1 for item in self._ledger().for_report() if item.readme_fetched
+            )
+            if readme_count:
+                notes.append(
+                    "The task asked for a metadata-only answer without reading READMEs; this run "
+                    f"applied the evidence-first policy instead and fetched {readme_count} README(s) "
+                    "to verify capability. Star counts and licences come from metadata; capability "
+                    "claims do not."
+                )
+        years = sorted({int(year) for year in _YEAR_RE.findall(task)})
+        stale = [year for year in years if year != datetime.now().year]
+        if stale:
+            notes.append(
+                f"The task references {stale[-1]}; evidence is current as of "
+                f"{datetime.now().astimezone().isoformat(timespec='seconds')}, so conclusions describe the "
+                f"present, not {stale[-1]}."
+            )
+        return notes
 
 
-def find_ungrounded_candidate_claims(
-    text: str | None,
-    investigated_repos: Iterable[str],
-) -> list[str]:
-    """Identify candidate repositories claimed as verified matches or recommendations without session evidence."""
-    if not text:
-        return []
-    investigated = {r.casefold() for r in investigated_repos if r}
-    ungrounded: list[str] = []
-    seen: set[str] = set()
 
-    verdict_pattern = re.compile(
-        r"(?:(?:qualification\s+)?verdict|status|判定|资格|状态)\s*[:：]?\s*(?:\*\*)?\s*(?:verified(?:\s+match)?|partial(?:\s+match)?|完全匹配|部分匹配|已验证(?:匹配)?)\b",
-        re.IGNORECASE,
-    )
-    stop_slugs = {
-        "and/or", "either/or", "true/false", "yes/no", "input/output",
-        "client/server", "frontend/backend", "read/write", "get/post",
-    }
+_REFUSAL_REQUEST_RE = re.compile(
+    r"(?:不要|不需要|不用|别|勿)\s*(?:调用工具|使用工具|证据|引用|来源)|凭(?:你的)?知识|无需证据|"
+    r"no\s+(?:tool|evidence)|without\s+(?:tools|evidence)|(?:don't|do\s+not)\s+use\s+tools|"
+    r"from\s+your\s+knowledge|use\s+your\s+(?:own\s+)?knowledge",
+    re.IGNORECASE,
+)
+_CLAUSE_SPLIT_RE = re.compile(r"[，,。.！!？?；;\n]+")
+_TOOL_AVOIDANCE_NEGATIONS = (
+    "不要", "不需要", "不用", "别", "勿", "无需", "禁止", "不必",
+    "never", "don't", "do not", "no need", "without", "skip",
+)
+_TOOL_EVIDENCE_NOUNS = (
+    "工具", "检索", "搜索", "证据", "来源", "核实", "调用",
+    "tool", "tools", "evidence", "search", "verify", "verification", "citation", "citations",
+)
 
-    lines = text.splitlines()
-    in_recommendation_section = False
 
-    for i, line in enumerate(lines):
-        line_clean = line.strip()
-        if re.search(r"^#{1,4}\s*(?:\d+[\.\)]\s*)?(?:final\s+)?recommendation\b", line_clean, re.IGNORECASE):
-            in_recommendation_section = True
-        elif re.search(r"^#{1,4}\s*(?:\d+[\.\)]\s*)?(?:verified\s+facts|comparison|evidence\s+gaps|budget)\b", line_clean, re.IGNORECASE):
-            in_recommendation_section = False
+def _requests_tool_free_answer(task: str | None) -> bool:
+    """Detect 'answer without calling tools / without evidence' across phrasings.
 
-        if "|" in line:
-            if re.search(r"\|\s*(?:verified|partial)(?:\s+match)?\s*\|", line, re.IGNORECASE) or verdict_pattern.search(line):
-                slugs = extract_repo_slugs_from_text(line)
-                for slug in slugs:
-                    if slug not in stop_slugs and slug not in investigated and slug not in seen:
-                        seen.add(slug)
-                        ungrounded.append(slug)
+    The ordered-phrase regex missed '不需要你调用任何工具' because a pronoun and a
+    verb sat between the negation and the noun; the report then silently overrode
+    the request instead of disclosing it. Clause-level co-occurrence is robust to
+    filler words while still requiring the negation and the tool noun to be
+    adjacent thoughts.
+    """
+
+    if not task:
+        return False
+    if _REFUSAL_REQUEST_RE.search(task):
+        return True
+    for clause in _CLAUSE_SPLIT_RE.split(task.casefold()):
+        if not clause:
             continue
+        if not any(token in clause for token in _TOOL_AVOIDANCE_NEGATIONS):
+            continue
+        if any(noun in clause for noun in _TOOL_EVIDENCE_NOUNS):
+            return True
+    return False
 
-        slugs_in_line = extract_repo_slugs_from_text(line)
-        if slugs_in_line:
-            block_lines = lines[i : min(i + 7, len(lines))]
-            block_text = "\n".join(block_lines)
-            if verdict_pattern.search(block_text):
-                for slug in slugs_in_line:
-                    if slug not in stop_slugs and slug not in investigated and slug not in seen:
-                        seen.add(slug)
-                        ungrounded.append(slug)
-            elif in_recommendation_section and re.search(r"\b(?:recommend|prefer|adopt|选择|推荐)\b", block_text, re.IGNORECASE):
-                for slug in slugs_in_line:
-                    if slug not in stop_slugs and slug not in investigated and slug not in seen:
-                        seen.add(slug)
-                        ungrounded.append(slug)
 
-    return ungrounded
+_README_OPT_OUT_RE = re.compile(
+    r"只看\s*元数据|只给\s*元数据|仅需\s*元数据|只要有?\s*元数据|"
+    r"metadata\s+only|skip\s+(?:the\s+)?readme",
+    re.IGNORECASE,
+)
+_README_NOUNS = ("readme", "自述文件")
+_README_OPT_OUT_FILLERS = frozenset(
+    "读看打开抓取获取调用分析去再自行直接你的请把我帮 "
+)
+
+
+def _requests_readme_opt_out(task: str | None) -> bool:
+    """Detect 'metadata is enough, do not read the README'.
+
+    A live run answered this by fetching three READMEs -- the right call, since
+    metadata cannot prove capability -- and disclosed nothing about overriding
+    the request, so the report read as if it had honoured it. The negation has
+    to sit on the README noun, or 'do not recommend what the README omits'
+    would be read as an opt-out.
+    """
+
+    if not task:
+        return False
+    lowered = task.casefold()
+    if _README_OPT_OUT_RE.search(lowered):
+        return True
+    for clause in _CLAUSE_SPLIT_RE.split(lowered):
+        if not clause:
+            continue
+        for noun in _README_NOUNS:
+            index = clause.find(noun)
+            if index < 0:
+                continue
+            head = clause[:index]
+            negation: tuple[int, str] | None = None
+            for token in _TOOL_AVOIDANCE_NEGATIONS:
+                position = head.rfind(token)
+                if position >= 0 and (negation is None or position > negation[0]):
+                    negation = (position, token)
+            if negation is None:
+                continue
+            gap = head[negation[0] + len(negation[1]) :]
+            if all(char in _README_OPT_OUT_FILLERS for char in gap):
+                return True
+    return False
+
+
+_REQUESTED_COUNT_RE = re.compile(
+    r"(\d{1,3})\s*(?:个|款|条|projects?|repositories|repos?|candidates?|libraries|tools?|options?)",
+    re.IGNORECASE,
+)
+_YEAR_RE = re.compile(r"\b(20\d{2})\b")

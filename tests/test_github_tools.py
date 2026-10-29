@@ -238,7 +238,7 @@ def test_repeated_direct_repository_detail_does_not_spend_candidate_slots_twice(
     assert len(seen) == 2
 
 
-def test_search_uses_small_mvp_page_size_and_rejects_larger_model_value() -> None:
+def test_search_uses_small_mvp_page_size_and_clamps_larger_model_value() -> None:
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -251,9 +251,12 @@ def test_search_uses_small_mvp_page_size_and_rejects_larger_model_value() -> Non
         oversized = registry.dispatch("search_public_repositories", {"query": "bounded", "per_page": 6})
 
     assert normal.ok is True
-    assert oversized.ok is False
-    assert oversized.error.code == "invalid_arguments"
-    assert len(seen) == 1
+    # A model asking for 10/30/50 results per page is normal; clamping keeps the
+    # MVP page size instead of aborting the run (the old behaviour killed a live
+    # run in 1.3 s with zero GitHub requests).
+    assert oversized.ok is True
+    assert oversized.data.items[0].full_name == "octo/demo"
+    assert len(seen) == 2
 
 
 def test_normal_small_search_response_stays_within_response_budget() -> None:
@@ -598,7 +601,7 @@ def test_streaming_response_without_content_length_stops_during_read() -> None:
     assert result.request_count == 1
 
 
-def test_t17_sized_search_response_still_fails_closed_after_page_bound() -> None:
+def test_oversized_descriptions_are_clipped_instead_of_aborting_the_run() -> None:
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -609,10 +612,14 @@ def test_t17_sized_search_response_still_fails_closed_after_page_bound() -> None
     with GitHubRestClient(budget=budget, transport=_transport(handler, seen)) as client:
         result = build_github_tool_registry(client).dispatch("search_public_repositories", {"query": "large"})
 
-    assert result.ok is False
-    # Search trimming keeps description field (it IS used), so 5×15000-char
-    # descriptions still exceed the 64KB budget after trimming.
-    assert result.error.code in {"response_too_large", "budget_exceeded"}
+    # Live GitHub hosts repositories that paste an entire README into the
+    # description field (measured: 229,789 bytes from one repo). Unclipped, one
+    # such hit consumed the whole 256 KB response budget and aborted a live run
+    # with response_too_large after two model turns and zero evidence.
+    assert result.ok is True
+    assert len(result.data.items) == 5
+    assert all(len(item.description or "") == 400 for item in result.data.items)
+    assert budget.response_bytes_used < 8 * 1024
     assert result.request_count == 1
 
 
