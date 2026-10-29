@@ -301,6 +301,68 @@ def test_readme_is_decoded_and_truncated() -> None:
     assert result.data.source.url.startswith("https://api.github.com/")
 
 
+def test_large_readme_is_streamed_with_a_byte_cap() -> None:
+    seen: list[httpx.Request] = []
+    huge = "A" * (400 * 1024)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=huge,
+            headers={"content-length": str(len(huge))},
+            request=request,
+        )
+
+    budget = RequestBudget(max_response_bytes=64 * 1024, max_candidates=3)
+    with GitHubRestClient(budget=budget, transport=_transport(handler, seen)) as client:
+        result = build_github_tool_registry(client).dispatch(
+            "get_public_readme", {"owner": "octo", "repo": "huge"}
+        )
+
+    assert result.ok is True
+    assert result.data.status == "truncated"
+    assert result.data.truncated is True
+    assert len(result.data.content or "") == 12_000
+    assert result.data.content_size == len(huge)
+    assert budget.response_bytes_used <= 12_000 * 4 + 4096
+    assert seen[0].headers["accept"] == "application/vnd.github.raw"
+
+
+def test_raw_readme_text_is_used_without_json_decoding() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="Raw README body with a table.", request=request)
+
+    with GitHubRestClient(transport=_transport(handler, seen)) as client:
+        result = build_github_tool_registry(client).dispatch(
+            "get_public_readme", {"owner": "octo", "repo": "demo"}
+        )
+
+    assert result.ok is True
+    assert result.data.status == "available"
+    assert result.data.content == "Raw README body with a table."
+    assert result.data.content_size == len("Raw README body with a table.")
+
+
+def test_readme_is_blocked_once_the_response_budget_is_spent() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="never fetched", request=request)
+
+    budget = RequestBudget(max_response_bytes=64 * 1024, max_candidates=3)
+    budget.record_response_size(64 * 1024)
+    with GitHubRestClient(budget=budget, transport=_transport(handler, seen)) as client:
+        result = build_github_tool_registry(client).dispatch(
+            "get_public_readme", {"owner": "octo", "repo": "demo"}
+        )
+
+    assert result.ok is False
+    assert result.error.code == "response_too_large"
+    assert seen == []
+
+
 def test_missing_license_and_missing_repository_are_distinct() -> None:
     seen: list[httpx.Request] = []
 

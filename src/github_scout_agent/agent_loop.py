@@ -77,8 +77,20 @@ class AgentLoop:
             "Priority rule: When you have discovered promising candidates from search, immediately "
             "investigate their details or README using candidate evidence tools. Do not continue "
             "repeatedly searching if candidates are already available to verify.",
-            "If initial search returns few or no results, try broader queries: shorten phrases, "
-            "use synonyms, drop optional qualifiers, or try adjacent domains.",
+            "Query fidelity: every query must preserve the task's distinctive subject and constraints "
+            "(the domain object, the capability and the platform). Never replace the requirement with a "
+            "broader generic category: for 'an agent that searches GitHub repositories and analyses READMEs', "
+            "search for 'github repository search agent', not for 'multi-agent framework'.",
+            "Query coverage: run at least two genuinely different queries that each keep that subject, varying "
+            "only synonyms, scope words or the implementation angle, for example 'repo analyzer mcp server' or "
+            "'code search agent python'. If results only match a broader category, say so and re-search with the "
+            "distinctive terms instead of presenting the broader category as the answer.",
+            "If initial search returns few or no results, try broader queries: shorten phrases, use synonyms, "
+            "drop optional qualifiers, or rephrase the same requirement from another angle — never switch to a "
+            "different subject.",
+            "Candidate capacity: the candidate budget is small. When get_public_readme returns "
+            "candidate_capacity_full, do not retry the same read; call replace_candidate_with_readme with the "
+            "blocked repository as target and the weakest accepted candidate as source to swap it in.",
             "If tool calls encounter rate limits or errors, synthesize and summarize findings from "
             "the evidence acquired so far rather than repeating failed calls.",
         ]
@@ -456,6 +468,8 @@ class AgentLoop:
         readme_attempts: set[str] = set()
         readme_available: set[str] = set()
         language_verified: set[str] = set()
+        replaced_away: set[str] = set()
+        capacity_blocked: set[str] = set()
         for call, result in executed_calls:
             try:
                 arguments = json.loads(call.arguments)
@@ -466,8 +480,24 @@ class AgentLoop:
             identity = f"{arguments.get('owner')}/{arguments.get('repo')}".casefold()
             if call.name == "get_public_readme" and identity in target_candidates:
                 readme_attempts.add(identity)
-                if result.ok and getattr(result.data, "status", None) == "available":
+                if result.ok and getattr(result.data, "status", None) in {"available", "truncated"}:
                     readme_available.add(identity)
+                elif getattr(getattr(result, "error", None), "code", None) == "candidate_capacity_full":
+                    # The candidate was never admitted to the evidence budget,
+                    # so it cannot be a gated evidence gap.
+                    capacity_blocked.add(identity)
+            if call.name == "replace_candidate_with_readme":
+                # The replacement returns README evidence for the target and
+                # retires the source candidate in a single call.
+                source = f"{arguments.get('source_owner')}/{arguments.get('source_repo')}".casefold()
+                target = f"{arguments.get('target_owner')}/{arguments.get('target_repo')}".casefold()
+                readme_attempts.discard(source)
+                readme_available.discard(source)
+                if result.ok:
+                    replaced_away.add(source)
+                readme_attempts.add(target)
+                if result.ok and getattr(result.data, "status", None) in {"available", "truncated"}:
+                    readme_available.add(target)
             if call.name == "get_public_repository" and result.ok and identity in target_candidates:
                 language = getattr(result.data, "language", None)
                 if isinstance(language, str) and language.casefold() in required_language_keys:
@@ -479,6 +509,14 @@ class AgentLoop:
                     for name in languages
                 ):
                     language_verified.add(identity)
+
+        # A candidate retired by replace_candidate_with_readme is no longer
+        # recommended, so it must not keep a stale "README unavailable" gap.
+        # The same holds for a candidate the budget never admitted.
+        out_of_scope = replaced_away | capacity_blocked
+        target_candidates = {
+            identity: record for identity, record in target_candidates.items() if identity not in out_of_scope
+        }
 
         gaps: list[str] = []
         for identity, record in target_candidates.items():

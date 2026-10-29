@@ -305,6 +305,7 @@ class GitHubRestClient:
         self.required_languages = tuple(normalized_languages)
         self.required_language = self.required_languages[0] if len(self.required_languages) == 1 else None
         self.request_log: list[dict[str, object]] = []
+        self._last_content_length: int | None = None
         headers = {
             "Accept": "application/vnd.github+json",
             "User-Agent": "github-scout-agent/1.0.0",
@@ -342,6 +343,9 @@ class GitHubRestClient:
         params: Mapping[str, object] | None = None,
         accept: str | None = None,
         skip_budget_recording: bool = False,
+        byte_cap: int | None = None,
+        allow_text: bool = False,
+        skip_size_precheck: bool = False,
     ) -> tuple[object, str, datetime]:
         captured_at = _now()
         for attempt in range(1, self._max_retries + 2):
@@ -350,7 +354,7 @@ class GitHubRestClient:
                 headers = {"Accept": accept} if accept else None
                 response_context = self._client.stream("GET", path, params=params, headers=headers)
                 with response_context as response:
-                    if not skip_budget_recording:
+                    if not skip_budget_recording and not skip_size_precheck:
                         content_length = response.headers.get("content-length")
                         if content_length and content_length.isdigit() and int(content_length) > self.budget.max_response_bytes:
                             raise GithubApiError(
@@ -369,6 +373,12 @@ class GitHubRestClient:
                     else:
                         try:
                             for chunk in response.iter_bytes():
+                                if byte_cap is not None:
+                                    remaining_cap = byte_cap - response_size
+                                    if remaining_cap <= 0:
+                                        break
+                                    if len(chunk) > remaining_cap:
+                                        chunk = chunk[:remaining_cap]
                                 response_size += len(chunk)
                                 self.budget.record_response_chunk(len(chunk), response_size)
                                 chunks.append(chunk)
@@ -380,6 +390,8 @@ class GitHubRestClient:
                     status = response.status_code
                     response_url = str(response.request.url)
                     response_headers = response.headers
+                    declared_length = response_headers.get("content-length")
+                    self._last_content_length = int(declared_length) if declared_length and declared_length.isdigit() else None
                     self.request_log.append(
                         {
                             "method": "GET",
@@ -409,6 +421,8 @@ class GitHubRestClient:
                 try:
                     return json.loads(content), response_url, captured_at
                 except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                    if allow_text:
+                        return content.decode("utf-8", errors="replace"), response_url, captured_at
                     raise GithubApiError("invalid_json", "schema", "GitHub returned invalid JSON", attempts=attempt) from exc
 
             if status == 404:
@@ -625,34 +639,51 @@ class GitHubRestClient:
                 "candidate capacity is full; README for a new candidate is blocked",
             )
         params = {"ref": ref} if ref else None
+        remaining = self.budget.max_response_bytes - self.budget.response_bytes_used
+        if remaining <= 0:
+            raise GithubApiError("response_too_large", "budget", "GitHub response exceeds the response-size limit")
+        # Only the head of the README is ever surfaced, so download the raw text
+        # with a byte cap instead of pulling the whole base64 JSON document.
+        byte_cap = min(remaining, self._readme_max_chars * 4 + 4096)
         try:
             payload, source_url, captured_at = self._request_json(
-                f"/repos/{owner}/{repo}/readme", params=params, accept="application/vnd.github.object+json"
+                f"/repos/{owner}/{repo}/readme",
+                params=params,
+                accept="application/vnd.github.raw",
+                byte_cap=byte_cap,
+                allow_text=True,
+                skip_size_precheck=True,
             )
         except GithubApiError as exc:
             if exc.code == "not_found":
                 return ReadmeEvidence(status="missing", source=None)
             raise
-        if not isinstance(payload, Mapping):
-            raise GithubApiError("invalid_readme_payload", "schema", "README response is not an object")
-        raw_content = payload.get("content")
-        if not isinstance(raw_content, str):
-            return ReadmeEvidence(status="unknown", source=_source(source_url, captured_at))
-        content = raw_content
-        encoding = payload.get("encoding")
-        if encoding == "base64":
-            try:
-                content = base64.b64decode(raw_content, validate=False).decode("utf-8", errors="replace")
-            except (binascii.Error, ValueError) as exc:
-                raise GithubApiError("invalid_readme_encoding", "schema", "README content encoding is invalid") from exc
-        content_size = payload.get("size") if isinstance(payload.get("size"), int) else len(content.encode("utf-8"))
+        if isinstance(payload, str):
+            content = payload
+            received_bytes = len(content.encode("utf-8"))
+            declared_size = self._last_content_length
+            content_size = declared_size if declared_size and declared_size >= received_bytes else received_bytes
+        else:
+            if not isinstance(payload, Mapping):
+                raise GithubApiError("invalid_readme_payload", "schema", "README response is not an object")
+            raw_content = payload.get("content")
+            if not isinstance(raw_content, str):
+                return ReadmeEvidence(status="unknown", source=_source(source_url, captured_at))
+            content = raw_content
+            if payload.get("encoding") == "base64":
+                try:
+                    content = base64.b64decode(raw_content, validate=False).decode("utf-8", errors="replace")
+                except (binascii.Error, ValueError) as exc:
+                    raise GithubApiError("invalid_readme_encoding", "schema", "README content encoding is invalid") from exc
+            content_size = payload.get("size") if isinstance(payload.get("size"), int) else len(content.encode("utf-8"))
         truncated = len(content) > self._readme_max_chars
+        sha = payload.get("sha") if isinstance(payload, Mapping) else None
         return ReadmeEvidence(
             status="truncated" if truncated else "available",
             content=content[: self._readme_max_chars],
             content_size=content_size,
             truncated=truncated,
-            sha=payload.get("sha") if isinstance(payload.get("sha"), str) else None,
+            sha=sha if isinstance(sha, str) else None,
             source=_source(source_url, captured_at),
         )
 

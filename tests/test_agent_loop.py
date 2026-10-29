@@ -416,6 +416,46 @@ def test_t29_required_evidence_reaches_finalization_only_after_all_readmes() -> 
     assert budget.github_requests_used == 4
 
 
+def _long_readme_handler(request: httpx.Request) -> httpx.Response:
+    if request.url.path == "/search/repositories":
+        return httpx.Response(200, json={"total_count": 1, "items": [_repo()]}, request=request)
+    if request.url.path.endswith("/readme"):
+        content = "Long README section. " * 900  # > readme_max_chars, still valid evidence
+        return httpx.Response(
+            200,
+            json={"encoding": "base64", "content": base64.b64encode(content.encode()).decode(), "size": len(content)},
+            request=request,
+        )
+    return httpx.Response(404, json={"message": "Not Found"}, request=request)
+
+
+def test_truncated_readme_counts_as_readme_evidence() -> None:
+    mock = ScriptedMockLLM([
+        AssistantResponse(tool_calls=[
+            ToolCall(id="search", name="search_public_repositories", arguments=json.dumps({"query": "github repository search agent"}))
+        ]),
+        AssistantResponse(tool_calls=[
+            ToolCall(id="readme", name="get_public_readme", arguments=json.dumps({"owner": "octo", "repo": "demo-agent"}))
+        ]),
+        AssistantResponse(content="Evidence-backed recommendation from the truncated but usable README."),
+    ])
+    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=64 * 1024)
+    with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_long_readme_handler)) as client:
+        result = AgentLoop(
+            model=mock,
+            tools=build_github_tool_registry(client),
+            budget=budget,
+            config=AgentLoopConfig(finalization_reserve_calls=1, require_candidate_readme=True),
+        ).run("find an agent that searches GitHub repositories and analyses READMEs")
+
+    assert result.status == "completed"
+    assert result.evidence_complete is True
+    assert result.evidence_gaps == []
+    readme_result = result.tool_results[1]
+    assert readme_result.ok is True
+    assert readme_result.data.status == "truncated"
+
+
 def test_t29_missing_candidate_readme_forces_partial_evidence_status() -> None:
     mock = ScriptedMockLLM([
         AssistantResponse(tool_calls=[
@@ -1354,3 +1394,118 @@ def test_investigated_candidates_satisfy_evidence_when_search_pool_exceeds_budge
     assert result.evidence_complete is True
     assert result.evidence_gaps == []
     assert len(result.tool_results) == 4
+
+def test_replacement_readme_counts_as_evidence_and_drops_stale_gap() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/search/repositories":
+            items = [
+                _repo() | {"full_name": "octo/legacy", "html_url": "https://github.com/octo/legacy"},
+                _repo() | {"full_name": "octo/current", "html_url": "https://github.com/octo/current"},
+            ]
+            return httpx.Response(200, json={"total_count": 2, "items": items}, request=request)
+        if request.url.path == "/repos/octo/current/readme":
+            return httpx.Response(422, json={"message": "Validation Failed"}, request=request)
+        if request.url.path.endswith("/readme"):
+            content = "README for a maintained replacement candidate."
+            return httpx.Response(
+                200,
+                json={"encoding": "base64", "content": base64.b64encode(content.encode()).decode(), "size": len(content)},
+                request=request,
+            )
+        return httpx.Response(404, json={"message": "Not Found"}, request=request)
+
+    mock = ScriptedMockLLM([
+        AssistantResponse(tool_calls=[
+            ToolCall(id="search", name="search_public_repositories", arguments=json.dumps({"query": "github repository search agent"}))
+        ]),
+        AssistantResponse(tool_calls=[
+            ToolCall(id="readme-legacy", name="get_public_readme", arguments=json.dumps({"owner": "octo", "repo": "legacy"})),
+            ToolCall(id="readme-current", name="get_public_readme", arguments=json.dumps({"owner": "octo", "repo": "current"})),
+        ]),
+        AssistantResponse(tool_calls=[
+            ToolCall(
+                id="replace",
+                name="replace_candidate_with_readme",
+                arguments=json.dumps(
+                    {
+                        "source_owner": "octo",
+                        "source_repo": "current",
+                        "target_owner": "octo",
+                        "target_repo": "fork-of-current",
+                    }
+                ),
+            )
+        ]),
+        AssistantResponse(content="1) Verified Facts: legacy and its replacement were read. 2) Evidence Gaps: None. 3) Recommendation: legacy."),
+    ])
+    budget = RequestBudget(max_candidates=2, max_github_requests=8, max_model_calls=6, max_feedback_bytes=64 * 1024)
+    with GitHubRestClient(budget=budget, transport=httpx.MockTransport(handler), max_retries=0) as client:
+        result = AgentLoop(
+            model=mock,
+            tools=build_github_tool_registry(client),
+            budget=budget,
+            config=AgentLoopConfig(finalization_reserve_calls=1, require_candidate_readme=True),
+        ).run("find an agent that searches GitHub repositories and analyses READMEs")
+
+    assert result.status == "completed"
+    assert result.evidence_complete is True, result.evidence_gaps
+    assert result.evidence_gaps == []
+    assert result.tool_results[2].ok is False  # the rejected README no longer blocks finalization
+    replacement = result.tool_results[3]
+    assert replacement.tool_name == "replace_candidate_with_readme"
+    assert replacement.ok is True
+    assert replacement.data.status in {"available", "truncated"}
+
+def test_capacity_blocked_candidates_do_not_block_finalization() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/search/repositories":
+            query = request.url.params.get("q")
+            names = ["octo/surfaced-0", "octo/surfaced-1"] if query == "first query" else ["octo/verified-0", "octo/verified-1"]
+            items = [
+                _repo() | {"full_name": name, "html_url": f"https://github.com/{name}"} for name in names
+            ]
+            return httpx.Response(200, json={"total_count": len(items), "items": items}, request=request)
+        if request.url.path.endswith("/readme"):
+            content = "README for an admitted candidate."
+            return httpx.Response(
+                200,
+                json={"encoding": "base64", "content": base64.b64encode(content.encode()).decode(), "size": len(content)},
+                request=request,
+            )
+        return httpx.Response(404, json={"message": "Not Found"}, request=request)
+
+    mock = ScriptedMockLLM([
+        AssistantResponse(tool_calls=[
+            ToolCall(id="search-1", name="search_public_repositories", arguments=json.dumps({"query": "first query"}))
+        ]),
+        AssistantResponse(tool_calls=[
+            ToolCall(id="search-2", name="search_public_repositories", arguments=json.dumps({"query": "second query"}))
+        ]),
+        AssistantResponse(tool_calls=[
+            ToolCall(id="readme-0", name="get_public_readme", arguments=json.dumps({"owner": "octo", "repo": "verified-0"})),
+            ToolCall(id="readme-1", name="get_public_readme", arguments=json.dumps({"owner": "octo", "repo": "verified-1"})),
+        ]),
+        AssistantResponse(tool_calls=[
+            ToolCall(id="readme-2", name="get_public_readme", arguments=json.dumps({"owner": "octo", "repo": "surfaced-0"})),
+            ToolCall(id="readme-3", name="get_public_readme", arguments=json.dumps({"owner": "octo", "repo": "surfaced-1"})),
+        ]),
+        AssistantResponse(content="1) Verified Facts: two admitted candidates were read. 2) Evidence Gaps: None. 3) Recommendation: verified-0."),
+    ])
+    budget = RequestBudget(max_candidates=2, max_github_requests=12, max_model_calls=8, max_feedback_bytes=64 * 1024)
+    with GitHubRestClient(budget=budget, transport=httpx.MockTransport(handler), max_retries=0) as client:
+        result = AgentLoop(
+            model=mock,
+            tools=build_github_tool_registry(client),
+            budget=budget,
+            config=AgentLoopConfig(finalization_reserve_calls=1, require_candidate_readme=True),
+        ).run("find an agent that searches GitHub repositories and analyses READMEs")
+
+    assert result.status == "completed", (result.termination_reason, result.evidence_gaps)
+    assert result.evidence_complete is True, result.evidence_gaps
+    assert result.evidence_gaps == []
+    for blocked in result.tool_results[4:6]:
+        assert blocked.tool_name == "get_public_readme"
+        assert blocked.ok is False
+        assert blocked.error.code == "candidate_capacity_full"
+
+
