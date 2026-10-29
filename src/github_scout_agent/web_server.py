@@ -10,15 +10,28 @@ import time
 import uuid
 from collections.abc import AsyncGenerator
 from pathlib import Path
+from typing import Literal
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
 
 from .application import run_research_task, render_mvp_report
 from .budget import RequestBudget
-from .config import AppConfig, load_config, ENV_MODEL_BASE_URL, ENV_MODEL, ENV_MODEL_API_KEY, ENV_MODEL_THINKING_MODE, ENV_MODEL_STRICT_TOOLS
+from .config import (
+    AppConfig,
+    ENV_MODEL,
+    ENV_MODEL_API_KEY,
+    ENV_MODEL_BASE_URL,
+    default_history_path,
+    default_settings_path,
+    load_config,
+    mask_secret,
+    model_configuration_status,
+    read_settings,
+    write_settings,
+)
 from .events import AgentEvent, EventRecorder
 from .github_api import GitHubRestClient
 from .model_client import OpenAICompatibleClient
@@ -63,13 +76,7 @@ class HistoryStore:
 
     @staticmethod
     def _resolve_path() -> Path:
-        custom = os.environ.get("GITHUB_SCOUT_HISTORY_FILE")
-        if custom:
-            return Path(custom).resolve()
-        local_scout = Path.cwd() / ".scout"
-        if local_scout.is_dir():
-            return local_scout / "web_history.jsonl"
-        return Path.home() / ".github-scout-agent" / "web_history.jsonl"
+        return default_history_path()
 
     @property
     def file_path(self) -> Path:
@@ -194,6 +201,62 @@ async def index() -> HTMLResponse:
     return HTMLResponse(html_path.read_text(encoding="utf-8"))
 
 
+class SettingsPayload(BaseModel):
+    """Write-only settings payload; secrets are never echoed back."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model_base_url: str | None = Field(default=None, max_length=500)
+    model: str | None = Field(default=None, max_length=200)
+    model_api_key: str | None = Field(default=None, max_length=4096)
+    github_token: str | None = Field(default=None, max_length=4096)
+    thinking_mode: Literal["disabled", "enabled"] | None = None
+    strict_tools: bool | None = None
+    max_tokens: int | None = Field(default=None, gt=0)
+
+
+def _settings_view() -> dict:
+    config = load_config()
+    stored = read_settings()
+    settings_path = default_settings_path()
+    environment_configured = any(
+        os.environ.get(name) for name in (ENV_MODEL_BASE_URL, ENV_MODEL, ENV_MODEL_API_KEY)
+    )
+    if environment_configured:
+        source = "environment"
+    elif stored:
+        source = "settings_file"
+    else:
+        source = "none"
+    api_key = config.model_api_key.get_secret_value() if config.model_api_key else None
+    github_token = config.github_token.get_secret_value() if config.github_token else None
+    return {
+        "ready": config.model_ready,
+        "status": model_configuration_status(config),
+        "model": config.model or "",
+        "base_url": config.model_base_url or "",
+        "has_key": api_key is not None,
+        "key_hint": mask_secret(api_key),
+        "has_github_token": github_token is not None,
+        "github_token_hint": mask_secret(github_token),
+        "thinking_mode": config.thinking_mode or "disabled",
+        "strict_tools": config.strict_tools,
+        "max_tokens": config.max_tokens,
+        "settings_path": str(settings_path),
+        "settings_exists": settings_path.is_file(),
+        "source": source,
+    }
+
+
+def _validation_detail(exc: ValidationError) -> str:
+    parts: list[str] = []
+    for error in exc.errors():
+        location = ".".join(str(part) for part in error.get("loc", ()))
+        message = str(error.get("msg", "invalid value"))
+        parts.append(f"{location}: {message}" if location else message)
+    return "; ".join(parts) or "Invalid settings"
+
+
 @web_app.get("/api/config")
 async def config_status() -> dict:
     config = load_config()
@@ -204,6 +267,53 @@ async def config_status() -> dict:
         "has_key": config.model_api_key is not None,
         "thinking_mode": config.thinking_mode or "disabled",
     }
+
+
+
+@web_app.get("/api/settings")
+async def settings_status() -> dict:
+    return _settings_view()
+
+
+@web_app.put("/api/settings")
+async def update_settings(payload: SettingsPayload) -> dict:
+    updates: dict[str, object] = {}
+    if payload.model_base_url is not None:
+        updates["model_base_url"] = payload.model_base_url.strip() or None
+    if payload.model is not None:
+        updates["model"] = payload.model.strip() or None
+    if payload.model_api_key is not None and payload.model_api_key.strip():
+        updates["model_api_key"] = payload.model_api_key.strip()
+    if payload.github_token is not None and payload.github_token.strip():
+        updates["github_token"] = payload.github_token.strip()
+    if payload.thinking_mode is not None:
+        updates["thinking_mode"] = payload.thinking_mode
+    if payload.strict_tools is not None:
+        updates["strict_tools"] = payload.strict_tools
+    if payload.max_tokens is not None:
+        updates["max_tokens"] = payload.max_tokens
+
+    merged = {
+        key: value
+        for key, value in {**read_settings(), **updates}.items()
+        if value not in (None, "")
+    }
+
+    try:
+        AppConfig(
+            model_base_url=merged.get("model_base_url"),
+            model=merged.get("model"),
+            model_api_key=SecretStr(str(merged["model_api_key"])) if merged.get("model_api_key") else None,
+            github_token=SecretStr(str(merged["github_token"])) if merged.get("github_token") else None,
+            thinking_mode=merged.get("thinking_mode"),
+            strict_tools=bool(merged.get("strict_tools", True)),
+            max_tokens=merged.get("max_tokens"),
+        )
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=_validation_detail(exc)) from exc
+
+    write_settings(merged)
+    return _settings_view()
 
 
 @web_app.post("/api/run")
@@ -226,7 +336,10 @@ async def run_task(req: TaskRequest, request: Request) -> StreamingResponse:
 async def _run_and_stream(task_id: str, req: TaskRequest, request: Request) -> AsyncGenerator[str, None]:
     config = load_config()
     if not config.model_ready:
-        yield _sse("error", {"code": "not_configured", "message": "Model configuration incomplete. Set env vars and restart."})
+        yield _sse("error", {
+            "code": "not_configured",
+            "message": "Model configuration incomplete. Open Settings (gear icon) and fill in the endpoint, model name and API key.",
+        })
         _store.update(task_id, status="error", termination_reason="configuration")
         return
 

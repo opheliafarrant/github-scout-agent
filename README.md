@@ -8,7 +8,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/version-v1.1.0-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg" alt="Python Version">
-  <img src="https://img.shields.io/badge/tests-188%20passed-success.svg" alt="Test Status">
+  <img src="https://img.shields.io/badge/tests-205%20passed-success.svg" alt="Test Status">
   <img src="https://img.shields.io/badge/architecture-Read--Only%20GET%20%7C%20Zero--Execution-brightgreen.svg" alt="Architecture">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-brightgreen.svg" alt="License"></a>
 </p>
@@ -111,7 +111,23 @@ pip install -e ".[test]"
 ### 2. 配置模型与服务端点
 GitHub Scout Agent 采用标准的 OpenAI-compatible Tool Calling 协议，兼容 **DeepSeek**、**通义千问 (Qwen)**、**OpenAI**、**Ollama** 等主流服务。
 
-通过环境变量配置接入点与凭证（Windows PowerShell 示例）：
+**方式一：图形界面配置（推荐，保存即生效，无需重启）**
+
+启动 `github-scout-agent web` 后，点击右上角 **⚙ 设置**，或点击页面顶部「尚未配置模型接口」提示条中的「去配置」按钮：
+
+1. 选择服务预设（DeepSeek / 通义千问 / OpenAI / 本地 Ollama / 自定义），自动填入对应的 Base URL 与模型名；
+2. 填入 API Key，点击「保存」，徽章即刻变为 `✓ <model> ready`。
+
+配置文件位于 `%APPDATA%\GitHubScoutAgent\config.json`：
+
+- API Key 与 GitHub Token 使用 **Windows DPAPI** 加密落盘，磁盘上不存明文；
+- `/api/settings` 与页面均不回显密钥，仅返回 `sk-…abcd` 形式的掩码；
+- 已保存的 Key 留空即保持原值，不会因再次保存而被清空；
+- 地址强制 HTTPS，仅 `localhost` / `127.0.0.1` / `[::1]` 允许 HTTP（用于本地 Ollama）。
+
+**方式二：环境变量（可选，优先级高于配置文件）**
+
+环境变量始终覆盖图形界面配置，适合 CI 与脚本环境注入凭证（Windows PowerShell 示例）：
 
 ```powershell
 # 必需：模型服务 Base URL 与 API Key
@@ -156,7 +172,8 @@ github-scout-agent web --host 127.0.0.1 --port 8080
 - **实时流程观察**：实时展现模型思考轮次、GitHub 工具调用记录、README 抓取进度与 5 维预算动态水位；
 - **结构化结果**：渲染候选项目卡片（Stars、License、主要语言）、横向对比表格与决策建议；
 - **一键导出**：支持 `📋 Copy Markdown` 一键复制完整报告，或 `📥 Export .md` 直接下载为本地 Markdown 文件；
-- **历史记录复查**：左侧边栏自动记录本地运行历史，随时点击复查历史调研成果。
+- **历史记录复查**：左侧边栏自动记录本地运行历史，随时点击复查历史调研成果；
+- **图形化配置**：右上角 ⚙ 设置面板支持预设端点选择、API Key 加密保存与即时生效，无需手工设置环境变量或重启进程。
 
 ### 方式 B：CLI 命令行调研（适合无图形界面与脚本批处理）
 
@@ -200,7 +217,7 @@ github-scout-agent gate-b --dry-run
 ```powershell
 pytest -m "not live_github" --tb=short
 ```
-- **测试结果**：**188 passed, 1 deselected**（耗时 ~5 秒，100% 通过）。
+- **测试结果**：**205 passed, 1 deselected**（耗时 ~5.5 秒，100% 通过）。
 - **覆盖核心机制**：
   - 七大 GitHub 工具参数 Pydantic 校验与 GET-only 拦截；
   - 预算硬性拦截、候选容量满载与平滑降级；

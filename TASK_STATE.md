@@ -3,7 +3,7 @@
 ## 1. Task Foundation
 - True Goal: 建立只读、有证据支持的 GitHub Scout Agent，并通过受限 Agent Loop 完成公开仓库候选发现、证据补充、透明对比与可核验推荐报告。
 - Current Stage: S4 验收与归档
-- Active Mainline: T53 Web UI 历史记录本地持久化与并发安全治理归档（188 项全量回归通过）。
+- Active Mainline: T54 Web UI 图形化模型配置与密钥加密落盘（205 项全量回归通过）。
 
 ## 2. Frozen Baselines and Inline Evidence
 - F1 Fact Baseline (客观状态与实测结论):
@@ -11,7 +11,7 @@
   - F1-02: 运行环境确认：Python 3.13.5、pip 25.1.1、Git 2.53.0；核心依赖 httpx 0.28.1、pydantic 2.14.1、typer 0.27.3、fastapi 0.115+、uvicorn 0.30+、pytest 8.4.2。
   - F1-03: 七大 GitHub 只读工具固定：`search_public_repositories`、`get_public_repository`、`get_known_repository`、`get_public_readme`、`replace_candidate_with_readme`、`get_repository_license`、`get_repository_languages_and_topics`，限制官方 `api.github.com`、公开仓库、GET-only 与 64 KiB 流式截断保护。
   - F1-04: 多模型端点兼容性已实测 [E3]: DeepSeek (`deepseek-flash`) 与 Qwen-Max (`qwen-max`) 真实链路在线验收全部通过。
-  - F1-05: 离线测试与自动化套件：完整自动化回归 `188 passed, 1 deselected, 1 warning in 5.41s` [E3: pytest]，compileall 零错误，语法与协议全面自洽。
+  - F1-05: 离线测试与自动化套件：完整自动化回归 `205 passed, 1 deselected, 1 warning in 5.53s` [E3: pytest]，compileall 零错误，语法与协议全面自洽。
   - F1-06: 缺陷与时序修复已固化：B1 闭包晚绑定、B2 Callable 类型、B3 None 守卫、B4 Gate A dict 纯函数构建、M1 thinking_mode 字面量校验、P0 提示词时序引导、P0 预算放宽可配。
   - F1-07: 候选发现与采纳机制完全解耦（Commit 822c616）：搜索结果不再自动锁定候选容量；仅在显式调查时消耗配额；证据门控拦截过早停步。
   - F1-08: Q1~Q3 深度修复与意图穿透固化：空结果促发更宽泛查询；消除空候选提前收尾；README 关键词强制 require_candidate_readme 门控。
@@ -26,6 +26,7 @@
   - F1-17: 远程仓库与版本拓扑校验 [E3]: opheliafarrant/github-scout-agent (Private)；Tag `v1.0.0` 锚定 `df3b4ce`，Tag `v1.1.0` 锚定 `71802a9` (含功能冻结 `c32d17f`)；主分支 `master` 持续演进维保提交 (`8641de5` 预算调优、`359c050` 部署同步、`13773de` T50 文档)；全量审计零凭据泄露。
   - F1-18: 开源发布准备就绪 [E3]: 根目录配置标准 Apache-2.0 LICENSE 与 NOTICE；pyproject.toml 补齐打包元数据；README 相对路径及徽章修复完成；docs/RELEASE_NOTES_v1.1.0.md 就绪；184 项离线测试全绿。
   - F1-19: KNOWN_PROJECTS 兜底与文档漂移修复固化 [E3: 184 passed, 1 deselected, 1 warning in 5.24s]：新增 `get_known_repository` 工具（白名单 cline/aider/openhands/swe-agent/mini-swe-agent，规范化小写无分隔符、不区分大小写，绕过搜索直达规范仓库并占用一个候选）；工具注册增至 7 个；修复 4 处文档漂移。
+  - F1-21: Web UI 图形化模型配置固化 [E3: 205 passed, 1 deselected, 1 warning in 5.53s；真实 HTTP 冒烟：GET /api/settings 掩码 sk-…3456、PUT 后 /api/config 转 ready、外部 http 端点 422、磁盘文件无明文]：新增设置弹窗（5 预设 + 高级选项 + 内联校验）与 GET/PUT /api/settings；配置二级来源 %APPDATA%\GitHubScoutAgent\config.json（GITHUB_SCOUT_SETTINGS_FILE 可覆盖），环境变量优先级不变；密钥经 Windows DPAPI 加密为 dpapi: 前缀落盘，接口仅回显掩码；历史文件路径改由 default_history_path() 统一至 %APPDATA%。
   - F1-20: Web UI 历史记录本地持久化与并发安全固化 [E3: 188 passed, 1 deselected in 5.34s]：引入 HistoryStore 抽象，支持本地 JSONL 原子持久化（.scout/web_history.jsonl），threading.Lock 互斥保护多工作线程读写，uuid4 随机熵防止 task_id 碰撞，FIFO 淘汰上限 100 条杜绝内存泄漏；覆盖重启重载、容量限制、并发多线程与损坏行自愈单测。
 - F2 Decision Baseline (已批准架构与决策边界):
   - F2-01 (D1): CLI 与本地 Web UI (FastAPI+SSE) 双入口；不采用重型框架与桌面端安装包。
@@ -39,7 +40,8 @@
   - F3-Release-1.1 (Current Release Anchor): `71802a9` (Git Tag `v1.1.0` 正式版基线，含功能冻结 `c32d17f`)。
   - F3-Master-Dev: `master` 分支头，承载后发布阶段维保提交与文档迭代；后续 Agent 严禁将 master 提交与已发布的冻结 Tag 混淆。
 ## 3. Current Engineering Flow and Impediments
-- Current Impediment / Stop Point: 无阻碍。T53 Web UI 历史记录持久化与并发治理已完成，全量回归 188 通过。
+- Current Impediment / Stop Point: 无阻碍。T54 图形化配置已完成并全量回归 205 通过；打包（Phase B/C）尚未开始，若确认要做需先修订 F2-01（当前条款明确『不采用桌面端安装包』）。
+- [x] T54: Web UI 图形化模型配置：新增设置弹窗（预设端点/高级选项/内联校验）、GET+PUT /api/settings、%APPDATA% 二级配置来源、DPAPI 密钥加密与掩码回显、历史路径统一；新增 tests/conftest.py 与 17 个单测 [E3: 205 passed]。
 - [x] T53: Web UI 历史记录本地持久化与并发安全治理：实现 HistoryStore、互斥锁、UUID task_id 与 JSONL 存储，新增 4 个单测，回归通过 [E3: 188 passed]。
 - [x] T52: KNOWN_PROJECTS 兜底与文档漂移修复：新增 get_known_repository 工具、工具注册 5→7、README 架构图与 docstring 漂移修复 [E3: 184 passed]。
 - [x] T51: 正式开源发布准备、Apache License 2.0 落地、README 链接与徽章修正、Release Notes 编制与元数据梳理。

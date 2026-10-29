@@ -9,13 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- **Graphical Model Configuration**: Added a `⚙ 设置` dialog to the Web UI with service presets (DeepSeek / Qwen / OpenAI / local Ollama / custom), a first-run callout on an unconfigured instance, inline HTTPS validation, and instant apply without restarting the process. Backed by new `GET /api/settings` and `PUT /api/settings` endpoints.
+- **Layered Configuration Store**: Settings now load from `%APPDATA%\GitHubScoutAgent\config.json` (override with `GITHUB_SCOUT_SETTINGS_FILE`); environment variables keep higher priority, so CLI and CI behaviour is unchanged.
+- **Hermetic Test Fixture**: Added `tests/conftest.py` pinning settings and history paths to a temporary directory, so the suite never touches the developer's real `%APPDATA%` state.
 - **Web UI History Persistence & Concurrency Guard**: Replaced in-memory store with `HistoryStore`, adding atomic JSONL persistence (`web_history.jsonl`), threading lock (`threading.Lock`) for safe concurrent multi-worker writes, collision-free task IDs (`uuid4` entropy), and bounded FIFO memory capacity.
 - **KNOWN_PROJECTS Fallback**: Added `get_known_repository` tool resolving a known project name (cline, aider, openhands, swe-agent, mini-swe-agent; case-insensitive, normalized) directly to its canonical repository, bypassing search while consuming one candidate slot; registry now exposes 7 read-only tools.
 - **Apache License 2.0**: Formally adopted Apache-2.0 open-source license; added full `LICENSE` text and `NOTICE` file with third-party dependency attributions.
 - **Project Metadata & Packaging**: Configured standard packaging metadata in `pyproject.toml` including Apache-2.0 license, author, keywords, and classifiers.
 - **GitHub Release Materials**: Prepared comprehensive release notes and repository topic metadata in `docs/RELEASE_NOTES_v1.1.0.md`.
 
+### Security
+- API keys and GitHub tokens are encrypted at rest with Windows DPAPI (stored as `dpapi:<ciphertext>`); all API responses return only masked hints (`sk-…abcd`) and never the plaintext secret.
+
 ### Changed
+- Web history now persists to `%APPDATA%\GitHubScoutAgent\web_history.jsonl` instead of depending on the current working directory, so an installation under `Program Files` stays writable.
+- Test suite expanded to 205 cases (17 new configuration and settings-endpoint tests).
 - Converted all internal documentation links in `README.md` to clean repository-relative paths.
 - Updated `README.md` header badge to official `Apache-2.0`.
 - Synchronized `TASK_STATE.md` with baseline decision F2-06.

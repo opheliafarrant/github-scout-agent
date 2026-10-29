@@ -85,13 +85,39 @@ button:disabled{opacity:.4;cursor:not-allowed}
 .budget-bar .bar{display:flex;gap:16px;flex-wrap:wrap}
 .budget-bar .item{color:var(--muted)}
 .budget-bar .item b{color:var(--text)}
+.icon-btn{background:var(--code-bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 12px;font:13px var(--font);cursor:pointer}
+.icon-btn:hover{border-color:var(--accent)}
+.callout{display:none;align-items:center;justify-content:space-between;gap:16px;background:#332b00;border:1px solid var(--warn);border-radius:var(--radius);padding:12px 16px}
+.callout.visible{display:flex}
+.callout .title{font-weight:600;font-size:14px;color:var(--warn);margin-bottom:2px}
+.callout .desc{font-size:12px;color:var(--muted)}
+.callout button{padding:6px 14px;font-size:13px;background:var(--warn);color:#1a1400;white-space:nowrap}
+dialog{background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:0;width:min(560px,92vw);max-height:88vh;overflow:hidden}
+dialog::backdrop{background:rgba(1,4,9,.72)}
+.settings-body{padding:20px 22px;overflow-y:auto;max-height:calc(88vh - 60px)}
+.settings-body h2{font-size:16px;margin-bottom:6px}
+.settings-body .hint{font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:16px;word-break:break-all}
+.field{display:flex;flex-direction:column;gap:6px;margin-bottom:14px}
+.field label,.field .label{font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.4px}
+.field input,.field select{background:var(--code-bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px 10px;font:13px var(--font)}
+.field input:focus,.field select:focus{outline:none;border-color:var(--accent)}
+.field .help{font-size:11px;color:var(--muted)}
+.field.inline{flex-direction:row;align-items:center;gap:8px}
+details.advanced{border-top:1px solid var(--border);padding-top:12px;margin:4px 0 14px}
+details.advanced summary{cursor:pointer;font-size:13px;color:var(--muted);margin-bottom:12px}
+.settings-status{min-height:18px;font-size:12px;line-height:1.5;margin:4px 0 10px;color:var(--muted)}
+.settings-status.error{color:var(--error)}
+.settings-status.ok{color:var(--success)}
+.dialog-actions{display:flex;justify-content:flex-end;gap:8px;border-top:1px solid var(--border);padding:14px 22px;background:var(--surface)}
+.dialog-actions .secondary{background:var(--code-bg);border:1px solid var(--border);color:var(--text)}
 </style>
 </head>
 <body>
 <header>
   <h1>🔍 GitHub Scout Agent</h1>
-  <span class="badge" id="config-badge">checking...</span>
+  <span class="badge" id="config-badge" onclick="openSettings()" style="cursor:pointer" title="点击配置模型接口">checking...</span>
   <span style="flex:1"></span>
+  <button id="settings-btn" class="icon-btn notranslate" translate="no" onclick="openSettings()" title="模型设置">⚙ 设置</button>
   <span style="font-size:12px;color:var(--muted)">V1.1</span>
 </header>
 <main>
@@ -100,6 +126,13 @@ button:disabled{opacity:.4;cursor:not-allowed}
   <div id="history-list"><span style="font-size:12px;color:var(--muted)">No tasks yet</span></div>
 </aside>
 <div class="content">
+  <div class="callout" id="setup-callout" role="alert">
+    <div>
+      <div class="title">尚未配置模型接口</div>
+      <div class="desc">填写 API 地址、模型名称和 Key 后即可开始检索。配置保存在本机，保存后立即生效，无需重启。</div>
+    </div>
+    <button onclick="openSettings()">去配置</button>
+  </div>
   <div class="input-area">
     <textarea id="task-input" placeholder="Describe what you want to find on GitHub...
 Example: Find three open-source Python AI agents that can search GitHub repositories, analyze README files, and recommend projects with evidence."></textarea>
@@ -115,26 +148,228 @@ Example: Find three open-source Python AI agents that can search GitHub reposito
   <div class="report-area" id="report-area"></div>
 </div>
 </main>
+<dialog id="settings-dialog" aria-labelledby="settings-title">
+  <div class="settings-body">
+    <h2 id="settings-title">⚙ 模型设置</h2>
+    <p class="hint">配置保存于 <code id="settings-path">本机</code>。API Key 使用 Windows DPAPI 加密后落盘，不会以明文写入磁盘，也不会回传到页面。</p>
+
+    <div class="field">
+      <label for="preset-select">服务预设</label>
+      <select id="preset-select" onchange="applyPreset()">
+        <option value="deepseek">DeepSeek</option>
+        <option value="qwen">通义千问（DashScope 兼容模式）</option>
+        <option value="openai">OpenAI</option>
+        <option value="ollama">本地 Ollama</option>
+        <option value="custom">自定义</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label for="set-base-url">API 地址（Base URL）</label>
+      <input id="set-base-url" type="url" spellcheck="false" autocomplete="off" placeholder="https://api.deepseek.com/v1">
+      <span class="help">必须使用 HTTPS；仅 localhost / 127.0.0.1 允许 HTTP。</span>
+    </div>
+
+    <div class="field">
+      <label for="set-model">模型名称</label>
+      <input id="set-model" type="text" spellcheck="false" autocomplete="off" placeholder="deepseek-chat">
+    </div>
+
+    <div class="field">
+      <label for="set-api-key">API Key</label>
+      <input id="set-api-key" type="password" spellcheck="false" autocomplete="off" placeholder="请输入 API Key">
+      <span class="help">已保存的 Key 不会回显；留空表示保持不变。</span>
+    </div>
+
+    <details class="advanced">
+      <summary>高级选项</summary>
+      <div class="field">
+        <label for="set-gh-token">GitHub Token（可选）</label>
+        <input id="set-gh-token" type="password" spellcheck="false" autocomplete="off" placeholder="可选，提高 GitHub API 速率上限">
+      </div>
+      <div class="field">
+        <label for="set-thinking">思考模式</label>
+        <select id="set-thinking">
+          <option value="disabled">disabled</option>
+          <option value="enabled">enabled</option>
+        </select>
+      </div>
+      <div class="field inline">
+        <input id="set-strict" type="checkbox" style="width:auto">
+        <label for="set-strict" style="text-transform:none;letter-spacing:0;font-weight:400">严格工具调用（strict_tools）</label>
+      </div>
+    </details>
+
+    <div id="settings-status" class="settings-status" role="status" aria-live="polite"></div>
+  </div>
+  <div class="dialog-actions">
+    <button type="button" class="secondary" onclick="closeSettings()">取消</button>
+    <button type="button" id="settings-save" onclick="saveSettings()">保存</button>
+  </div>
+</dialog>
 <script>
 let currentTaskId = null;
 let eventSource = null;
 let currentReportMarkdown = '';
 
+const PRESETS = {
+  deepseek: {base:'https://api.deepseek.com/v1', model:'deepseek-chat'},
+  qwen: {base:'https://dashscope.aliyuncs.com/compatible-mode/v1', model:'qwen-plus'},
+  openai: {base:'https://api.openai.com/v1', model:'gpt-4o-mini'},
+  ollama: {base:'http://127.0.0.1:11434/v1', model:'qwen2.5:7b'},
+  custom: null,
+};
+let settingsBusy = false;
+
 async function init(){
+  await refreshConfig();
+  loadHistory();
+}
+
+async function refreshConfig(){
+  const badge = document.getElementById('config-badge');
+  const callout = document.getElementById('setup-callout');
   try{
     const r = await fetch('/api/config');
+    if(!r.ok) throw new Error('HTTP ' + r.status);
     const cfg = await r.json();
-    const badge = document.getElementById('config-badge');
     if(cfg.ready){
       badge.className='badge badge-ok';
       badge.textContent = '✓ ' + cfg.model + ' ready';
+      callout.classList.remove('visible');
     }else{
       badge.className='badge badge-warn';
-      badge.textContent = '⚠ Not configured';
+      badge.textContent = '⚠ 未配置';
+      callout.classList.add('visible');
     }
-  }catch(e){}
-  loadHistory();
+  }catch(e){
+    badge.className='badge badge-warn';
+    badge.textContent = '⚠ 服务不可用';
+    callout.classList.add('visible');
+  }
 }
+
+function setVal(id, v){ document.getElementById(id).value = v; }
+function getVal(id){ return document.getElementById(id).value.trim(); }
+
+function detectPreset(base){
+  if(!base) return 'custom';
+  const normalized = base.replace(/\/+$/,'').toLowerCase();
+  for(const name of Object.keys(PRESETS)){
+    const preset = PRESETS[name];
+    if(preset && preset.base.replace(/\/+$/,'').toLowerCase() === normalized) return name;
+  }
+  return 'custom';
+}
+
+function applyPreset(){
+  const name = document.getElementById('preset-select').value;
+  const preset = PRESETS[name];
+  if(!preset) return;
+  setVal('set-base-url', preset.base);
+  setVal('set-model', preset.model);
+}
+
+function setSettingsStatus(text, kind){
+  const el = document.getElementById('settings-status');
+  el.textContent = text || '';
+  el.className = 'settings-status' + (kind ? ' ' + kind : '');
+}
+
+async function openSettings(){
+  const dialog = document.getElementById('settings-dialog');
+  if(dialog.open) return;
+  dialog.showModal();
+  setSettingsStatus('加载配置…','');
+  try{
+    const r = await fetch('/api/settings');
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    const s = await r.json();
+    setVal('set-base-url', s.base_url || '');
+    setVal('set-model', s.model || '');
+    setVal('set-api-key', '');
+    document.getElementById('set-api-key').placeholder =
+      s.has_key ? '已保存（' + (s.key_hint || '****') + '），留空保持不变' : '请输入 API Key';
+    setVal('set-gh-token', '');
+    document.getElementById('set-gh-token').placeholder =
+      s.has_github_token ? '已保存，留空保持不变' : '可选，提高 GitHub API 速率上限';
+    setVal('set-thinking', s.thinking_mode || 'disabled');
+    document.getElementById('set-strict').checked = s.strict_tools !== false;
+    setVal('preset-select', detectPreset(s.base_url));
+    document.getElementById('settings-path').textContent = s.settings_path || '本机';
+    setSettingsStatus(
+      s.source === 'environment'
+        ? '当前由环境变量提供配置；保存后环境变量仍然优先。'
+        : (s.ready ? '' : '填写下方三项后即可开始检索。'),
+      ''
+    );
+  }catch(e){
+    setSettingsStatus('无法读取当前配置：' + e.message, 'error');
+  }
+}
+
+function closeSettings(){
+  const dialog = document.getElementById('settings-dialog');
+  if(dialog.open) dialog.close();
+}
+
+async function saveSettings(){
+  if(settingsBusy) return;
+  const baseUrl = getVal('set-base-url');
+  const modelName = getVal('set-model');
+  const apiKey = getVal('set-api-key');
+  const ghToken = getVal('set-gh-token');
+
+  if(!baseUrl || !modelName){
+    setSettingsStatus('请先填写 API 地址和模型名称。', 'error');
+    return;
+  }
+  const httpsOk = /^https:\/\//i.test(baseUrl);
+  const localHttpOk = /^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/i.test(baseUrl);
+  if(!httpsOk && !localHttpOk){
+    setSettingsStatus('API 地址必须使用 HTTPS；仅 localhost / 127.0.0.1 允许 HTTP。', 'error');
+    return;
+  }
+
+  const body = {
+    model_base_url: baseUrl,
+    model: modelName,
+    thinking_mode: getVal('set-thinking') || 'disabled',
+    strict_tools: document.getElementById('set-strict').checked,
+  };
+  if(apiKey) body.model_api_key = apiKey;
+  if(ghToken) body.github_token = ghToken;
+
+  const btn = document.getElementById('settings-save');
+  const original = btn.textContent;
+  settingsBusy = true;
+  btn.disabled = true;
+  btn.textContent = '保存中…';
+  setSettingsStatus('正在保存…','');
+  try{
+    const r = await fetch('/api/settings', {
+      method:'PUT',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(body),
+    });
+    const data = await r.json().catch(function(){ return {}; });
+    if(!r.ok){
+      const detail = typeof data.detail === 'string' ? data.detail : ('HTTP ' + r.status);
+      setSettingsStatus('保存失败：' + detail, 'error');
+      return;
+    }
+    setSettingsStatus('已保存 ✓', 'ok');
+    await refreshConfig();
+    setTimeout(closeSettings, 500);
+  }catch(e){
+    setSettingsStatus('保存失败：' + e.message + '。请确认本地服务仍在运行。', 'error');
+  }finally{
+    settingsBusy = false;
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+}
+
 init();
 
 async function loadHistory(){
