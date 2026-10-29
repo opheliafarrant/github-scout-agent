@@ -406,7 +406,7 @@ def list_model_ids(
     *,
     transport: httpx.BaseTransport | None = None,
     timeout: float = 15.0,
-    max_models: int = 200,
+    max_models: int = 500,
 ) -> list[str]:
     """Fetch the provider's advertised model ids from the OpenAI-compatible /models route.
 

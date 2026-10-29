@@ -365,14 +365,23 @@ async function fetchModels(){
       option.value = id;
       list.appendChild(option);
     }
+    const input = document.getElementById('set-model');
+    input.placeholder = '点击选择（共 ' + data.count + ' 个模型）';
+    // 浏览器会按输入框里的文字过滤 datalist：旧值不在列表里时，用户会误以为"只返回了几个模型"
     const current = getVal('set-model');
-    if(!current && data.models.length) setVal('set-model', data.models[0]);
+    const listed = current && data.models.indexOf(current) !== -1;
+    let note = '';
+    if(current && !listed){
+      setVal('set-model', '');
+      note = ' 原填写的「' + current + '」不在该服务的模型列表中，已清空，请点击输入框重新选择。';
+    }
     document.getElementById('model-help').textContent =
-      '已从该服务获取 ' + data.count + ' 个模型，点击输入框直接下拉选择，也可以手动输入。';
+      '已从该服务获取 ' + data.count + ' 个模型：点击输入框可下拉选择；输入文字会按关键字筛选，清空输入框才显示全部。';
     setSettingsStatus(
-      '已获取 ' + data.count + ' 个可用模型' + (data.used_saved_key ? '（使用已保存的 Key 验证）' : '') + '。',
-      'ok'
+      '已获取 ' + data.count + ' 个可用模型' + (data.used_saved_key ? '（使用已保存的 Key 验证）' : '') + '。' + note,
+      note ? 'error' : 'ok'
     );
+    if(!current || !listed) input.focus();
   }catch(e){
     setSettingsStatus('获取失败：' + e.message, 'error');
   }finally{
@@ -431,9 +440,25 @@ async function saveSettings(){
       setSettingsStatus('保存失败：' + detail, 'error');
       return;
     }
-    setSettingsStatus('已保存 ✓', 'ok');
+    const v = data.verification || {};
     await refreshConfig();
-    setTimeout(closeSettings, 500);
+    if(v.result === 'failed'){
+      setSettingsStatus('已保存，但连通性验证失败：' + (v.message || '未知错误'), 'error');
+      return;
+    }
+    if(v.result === 'unknown'){
+      setSettingsStatus('已保存 ✓ ' + (v.message || ''), '');
+      setTimeout(closeSettings, 1500);
+      return;
+    }
+    const unlisted = v.result === 'ok' && v.model_listed === false;
+    setSettingsStatus(
+      v.result === 'ok'
+        ? '已保存 ✓ 连通性验证通过，该服务列出 ' + v.count + ' 个模型' + (unlisted ? '，但其中没有「' + modelName + '」，请确认模型名是否写错。' : '。')
+        : '已保存 ✓',
+      unlisted ? 'error' : 'ok'
+    );
+    if(!unlisted) setTimeout(closeSettings, 800);
   }catch(e){
     setSettingsStatus('保存失败：' + e.message + '。请确认本地服务仍在运行。', 'error');
   }finally{

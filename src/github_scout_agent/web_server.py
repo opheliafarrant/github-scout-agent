@@ -275,6 +275,39 @@ async def settings_status() -> dict:
     return _settings_view()
 
 
+async def _verify_saved_endpoint(settings: dict[str, object]) -> dict:
+    """Best-effort connectivity check performed once, when settings are saved.
+
+    Settings are persisted first: a failed probe must never throw away what the
+    user typed, it only has to be visible. Providers without a /models route
+    cannot be verified this way, so they report "unknown" instead of failing.
+    """
+
+    base_url = str(settings.get("model_base_url") or "").strip()
+    model = str(settings.get("model") or "").strip()
+    if not base_url or not model:
+        return {"result": "skipped", "message": "未填写 API 地址或模型名称。"}
+    raw_key = settings.get("model_api_key")
+    try:
+        models = await asyncio.to_thread(
+            list_model_ids, base_url, str(raw_key) if raw_key else None, timeout=8.0
+        )
+    except ModelAdapterError as exc:
+        if exc.code == "model_list_unsupported":
+            return {
+                "result": "unknown",
+                "message": "该端点没有 /models 接口，无法自动验证；请跑一条任务确认。",
+                "status_code": exc.status_code,
+            }
+        return {
+            "result": "failed",
+            "reason": _MODEL_LIST_REASONS.get(exc.code, "unknown"),
+            "message": str(exc),
+            "status_code": exc.status_code,
+        }
+    return {"result": "ok", "count": len(models), "model_listed": model in models}
+
+
 @web_app.put("/api/settings")
 async def update_settings(payload: SettingsPayload) -> dict:
     updates: dict[str, object] = {}
@@ -313,7 +346,10 @@ async def update_settings(payload: SettingsPayload) -> dict:
         raise HTTPException(status_code=422, detail=_validation_detail(exc)) from exc
 
     write_settings(merged)
-    return _settings_view()
+
+    view = _settings_view()
+    view["verification"] = await _verify_saved_endpoint(merged)
+    return view
 
 
 class ModelListPayload(BaseModel):

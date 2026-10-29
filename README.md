@@ -8,7 +8,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/version-v1.1.0-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg" alt="Python Version">
-  <img src="https://img.shields.io/badge/tests-230%20passed-success.svg" alt="Test Status">
+  <img src="https://img.shields.io/badge/tests-234%20passed-success.svg" alt="Test Status">
   <img src="https://img.shields.io/badge/architecture-Read--Only%20GET%20%7C%20Zero--Execution-brightgreen.svg" alt="Architecture">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-brightgreen.svg" alt="License"></a>
 </p>
@@ -116,8 +116,8 @@ GitHub Scout Agent 采用标准的 OpenAI-compatible Tool Calling 协议，兼�
 启动 `github-scout-agent web` 后，点击右上角 **⚙ 设置**，或点击页面顶部「尚未配置模型接口」提示条中的「去配置」按钮：
 
 1. 选择服务预设（DeepSeek / 通义千问 / OpenAI / 本地 Ollama / 自定义），自动填入对应的 Base URL 与模型名；
-2. 填入 API Key 后点「**获取模型列表**」，面板会向该端点请求 `/models` 并把可选模型装进下拉框——不用再猜模型名（如 `qwen-max`、`deepseek-ai/DeepSeek-V3`）；也可继续手动输入；
-3. 点击「保存」，徽章即刻变为 `✓ <model> ready`。**本地 Ollama 等回环端点不需要 Key**，选好预设直接保存即可。
+2. 填入 API Key 后点「**获取模型列表**」，面板会向该端点请求 `/models` 并把可选模型（实测某中转服务返回 183 个）装进下拉框——不用再猜模型名。注意浏览器的下拉会**按输入框已有文字过滤**，输入框为空时才显示全部；
+3. 点击「保存」，徽章即刻变为 `✓ <model> ready`。保存时会顺带做一次连通性验证：Key 被拒、地址不通、模型名不在该服务的清单里，都会当场红字提示，不必等到跑任务才暴露。**本地 Ollama 等回环端点不需要 Key**，选好预设直接保存即可。
 
 配置文件位于 `%APPDATA%\GitHubScoutAgent\config.json`：
 
@@ -230,7 +230,7 @@ github-scout-agent gate-b --dry-run
 ```powershell
 pytest -m "not live_github" --tb=short
 ```
-- **测试结果**：**230 passed, 1 deselected**（耗时 ~7.7 秒，100% 通过）。
+- **测试结果**：**234 passed, 1 deselected**（耗时 ~8 秒，100% 通过）。
 - **覆盖核心机制**：
   - 七大 GitHub 工具参数 Pydantic 校验与 GET-only 拦截；
   - 预算硬性拦截、候选容量满载与平滑降级；

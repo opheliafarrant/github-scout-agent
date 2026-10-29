@@ -50,6 +50,21 @@ def settings_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return path
 
 
+@pytest.fixture(autouse=True)
+def _offline_model_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Saving settings now probes the endpoint; keep the suite offline by default."""
+
+    def unreachable(base_url: str, api_key: str | None = None, **_: object) -> list[str]:
+        raise ModelAdapterError(
+            "model endpoint does not expose a /models route",
+            code="model_list_unsupported",
+            category="compatibility",
+            status_code=404,
+        )
+
+    monkeypatch.setattr("github_scout_agent.web_server.list_model_ids", unreachable)
+
+
 def test_missing_settings_file_reads_as_empty(tmp_path: Path) -> None:
     assert read_settings(tmp_path / "absent.json") == {}
 
@@ -442,3 +457,91 @@ def test_model_list_route_requires_an_endpoint(client: TestClient, settings_file
     payload = client.post("/api/settings/models", json={}).json()
     assert payload["ok"] is False
     assert payload["reason"] == "invalid"
+
+
+@requires_dpapi
+def test_update_settings_verifies_connectivity_and_reports_the_model(
+    client: TestClient, settings_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "github_scout_agent.web_server.list_model_ids",
+        lambda *a, **k: ["deepseek-chat", "deepseek-reasoner"],
+    )
+    response = client.put(
+        "/api/settings",
+        json={
+            "model_base_url": "https://api.deepseek.com/v1",
+            "model": "deepseek-chat",
+            "model_api_key": "sk-verified",
+        },
+    )
+    assert response.status_code == 200
+    verification = response.json()["verification"]
+    assert verification == {"result": "ok", "count": 2, "model_listed": True}
+
+
+@requires_dpapi
+def test_update_settings_saves_even_when_the_key_is_rejected(
+    client: TestClient, settings_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def rejected(base_url: str, api_key: str | None = None, **_: object) -> list[str]:
+        raise ModelAdapterError(
+            "model endpoint rejected the API key: Incorrect API key provided",
+            code="model_list_auth",
+            category="auth",
+            status_code=401,
+        )
+
+    monkeypatch.setattr("github_scout_agent.web_server.list_model_ids", rejected)
+    response = client.put(
+        "/api/settings",
+        json={
+            "model_base_url": "https://maas.example.test/compatible-mode/v1",
+            "model": "deepseek-chat",
+            "model_api_key": "sk-wrong",
+        },
+    )
+    assert response.status_code == 200
+    verification = response.json()["verification"]
+    assert verification["result"] == "failed"
+    assert verification["reason"] == "auth"
+    assert "Incorrect API key" in verification["message"]
+    assert verification["status_code"] == 401
+    # A failed probe must never discard what the user typed.
+    assert read_settings(settings_file)["model_base_url"] == "https://maas.example.test/compatible-mode/v1"
+
+
+@requires_dpapi
+def test_update_settings_flags_a_model_the_provider_does_not_list(
+    client: TestClient, settings_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("github_scout_agent.web_server.list_model_ids", lambda *a, **k: ["qwen-max"])
+    response = client.put(
+        "/api/settings",
+        json={
+            "model_base_url": "https://maas.example.test/compatible-mode/v1",
+            "model": "deepseek-flash",
+            "model_api_key": "sk-ok",
+        },
+    )
+    verification = response.json()["verification"]
+    assert verification["result"] == "ok"
+    assert verification["model_listed"] is False
+
+
+@requires_dpapi
+def test_update_settings_marks_an_unverifiable_endpoint_as_unknown(
+    client: TestClient, settings_file: Path
+) -> None:
+    response = client.put(
+        "/api/settings",
+        json={
+            "model_base_url": "https://api.example.com/v1",
+            "model": "example-model",
+            "model_api_key": "sk-whatever",
+        },
+    )
+    verification = response.json()["verification"]
+    assert verification["result"] == "unknown"
+    assert response.json()["ready"] is True
+
