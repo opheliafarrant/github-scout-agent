@@ -30,6 +30,7 @@
   - F1-22: 桌面分发 Phase B 交付 [E3: `dist/GitHubScoutAgent/GitHubScoutAgent.exe` 实测]：PyInstaller 6.22.3 onedir 构建，PE Subsystem=2（无控制台窗口），产物 8.5 MB exe / 41 MB 目录；`templates/index.html` 已随包（GET / → 200，28962 字节，含 ⚙ 设置入口）；实测 `web --port 8091` 与**双击式无参启动**均正常，无参启动自动占用 8080 并唤起浏览器（日志可见浏览器 GET / 与 /api/history）；系统无控制台时 stdout 重定向至 `%APPDATA%\GitHubScoutAgent\logs\web-ui.log`（686 字节实测写入）；二次双击检测到既有实例 → 仅唤浏览器，进程数保持 1、无冗余监听；运行后防火墙规则新增数 = 0（仅监听 127.0.0.1 未触发提示框）。打包资产集中于 `packaging/`（launcher.py / github_scout_agent.spec / version_info.txt），build/ 与 dist/ 已 gitignore，源码零重复。
   - F1-20: Web UI 历史记录本地持久化与并发安全固化 [E3: 188 passed, 1 deselected in 5.34s]：引入 HistoryStore 抽象，支持本地 JSONL 原子持久化（.scout/web_history.jsonl），threading.Lock 互斥保护多工作线程读写，uuid4 随机熵防止 task_id 碰撞，FIFO 淘汰上限 100 条杜绝内存泄漏；覆盖重启重载、容量限制、并发多线程与损坏行自愈单测。
 - F1-23: 桌面成品 UI/功能审计修复固化 [E3: 214 passed；重建 exe 后 CDP 真实浏览器复测：console 零报错、Ollama 无 Key → ready:true 且 run 越过 not_configured 进入 network_error、空任务给出提示]：修复 4 项真实缺陷——(1) 回环端点（Ollama/LM Studio/vLLM）无 Key 时被判定 not_configured，预设可选但永远跑不起来（config.model_ready 与 OpenAICompatibleClient 双门控，现允许 loopback 无 Key 且省略 Authorization 头）；(2) 页面缺 favicon 导致每次加载 404；(3) 四个预算输入框 label 无 for/id 关联、任务输入框缺可访问名；(4) 空任务点击开始静默无反馈。新增 5 个回归单测覆盖密钥无关回环放行与远端仍强制 Key。
+  - F1-24: 桌面成品真实模型端到端验收 [E3: 冻结 exe + DeepSeek `deepseek-chat`，真实无头 Chrome/CDP 驱动 127.0.0.1:8080]：设置面板配置 DeepSeek 后 ready:true（密钥 DPAPI 落盘，磁盘 grep 明文 0 命中）；单条 143 字符查询 57.5 秒完成（status=completed / termination=model_finalized），产出 25,209 字符报告、页面渲染 23,555 字符、console 零报错；预算 3/3 候选、14/20 GitHub、11/12 模型、response 233,350/262,144 字节（89%）；历史写入 `%APPDATA%\GitHubScoutAgent\web_history.jsonl`（1 条 completed）。诚实边界：末个候选 README 因总响应字节预算耗尽报 response_too_large（已实测复现），报告据此自标 Completeness: partial；模型自选查询词泛化为 “multi-agent python framework”，偏离任务意图（见 P-03）。
 - F2 Decision Baseline (已批准架构与决策边界):
   - F2-01 (D1): CLI 与本地 Web UI (FastAPI+SSE) 双入口；采用 PyInstaller + Inno Setup 的轻量桌面分发（用户 2026-10-29 授权修订，原条款「不采用桌面端安装包」废止；仍不采用 Electron/Tauri 等重型桌面框架）。
   - F2-02 (D2): 严格只读与公开边界；支持无 Token (60次/h) 与用户只读 Token (5000次/h)；Token 不进模型/日志/报告/Git。
@@ -58,4 +59,5 @@
 ## 4. Ruled-Out Approaches and Parking Lot
 - Ruled Out: MVP 不采用 GitHub 写操作、私有仓库、Git Clone、第三方代码执行、任意 Shell 工具、复杂多 Agent 重型框架、非结构化正则提取。
 - ~~P-01: 评估基于 FastAPI / Streamlit 构建本地 Web UI 交互界面~~ (V1.1 已交付)
+- P-03: E2E 暴露的两项输出质量项（非功能缺陷）——模型自选查询词偏离任务意图；单次大 README 可耗尽 256KB 总响应字节预算使候选证据降级为 partial | Reason for Deferral: 不影响端到端可用性，属策略/预算调优 | Wake-up Timing: Phase C 安装包交付后评估。
 - P-02: 评估多模型端点自动测速与智能路由切换 | Reason for Deferral: 当前单模型配置稳定支持 DeepSeek/Qwen 等 OpenAI 兼容端点 | Wake-up Timing: 后续模型扩展阶段。
