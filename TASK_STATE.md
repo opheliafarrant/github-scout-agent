@@ -3,7 +3,7 @@
 ## 1. Task Foundation
 - True Goal: 建立只读、有证据支持的 GitHub Scout Agent，并通过受限 Agent Loop 完成公开仓库候选发现、证据补充、透明对比与可核验推荐报告。
 - Current Stage: S4 验收与归档
-- Active Mainline: v1.2.0 发布就绪（T63–T67 证据治理 + Inno Setup 安装包 + 应用图标 + 360 测试全绿）；本版待提交、打 tag、推送并创建 GitHub Release。
+- Active Mainline: v1.2.0 正式发布完成（T63–T67 证据治理 + Inno Setup 安装包 + 统一 1.2.0 版本 + 360 测试全绿 + GitHub Release v1.2.0 附带安装包发布完成 + 仓库已转为 Public 公开访问）。
 
 ## 2. Frozen Baselines and Inline Evidence
 - F1 Fact Baseline (客观状态与实测结论):
@@ -40,7 +40,7 @@
   - F3-Master-Dev: `master` 分支头，承载后发布阶段维保提交与功能强化（T54-T67）。
 
 ## 3. Current Engineering Flow and Impediments
-- Current Impediment / Stop Point: 无阻碍。v1.2.0 产物与文档已就绪，等待提交与推送（Release 附件即 dist/installer/GitHubScoutAgent-1.2.0-setup.exe）。
+- Current Impediment / Stop Point: 无阻碍。v1.2.0 已完成提交（48d6232）、打 tag（v1.2.0）、推送到 GitHub 远端、GitHub Release 创建并上传安装包资产；仓库已依用户授权转为 Public 公开，匿名下载实测通过（E3 206 PE MZ）。
 - [x] T64.4: 历史侧栏滚动 + 逐条删除（DELETE /api/history/{id} + HistoryStore.delete）-> 新增 4 条用例 [E3: 310 passed]。
 - [x] T64.3: 编造 README 主张门控（finalize 有界纠正轮 + 主循环 nudge）与成熟度误伤修复（证据缺口区段/显式不成熟措辞豁免）-> 新增 3 条回归用例 [E3: 306 passed]。
 - [x] T64.1: 样本实测暴露的两项 P0 修复（品牌名归属假阳性、中文选型任务免 README 早收尾）-> 新增 2 条回归用例 [E3: 279 passed]。
