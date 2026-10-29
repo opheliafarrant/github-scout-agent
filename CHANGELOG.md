@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added the missing favicon so every page load no longer logs a 404.
 - Associated the four budget inputs with their labels (`for`/`id`) and gave the task textarea an accessible name.
 - Submitting an empty task now shows an actionable hint in the event feed instead of silently doing nothing.
+- The model list is no longer a filtered `<datalist>`: it is a dedicated `<select>` fed by the endpoint's `/models` answer, so an endpoint offering 183 models shows all 183 instead of only the ones matching the text already typed into the field. The fetched list is cached per Base URL in `localStorage`, so reloading the page no longer empties the picker.
 - Queries no longer drift to a broader category: the research policy now requires every search to preserve the task's distinctive subject, and reports must say so instead of presenting a generic category as the answer.
 - README downloads no longer exhaust the response-byte budget: READMEs are fetched as raw text with a byte cap instead of pulling the whole base64 JSON document into memory (233 KB → 27 KB per run on the reference task).
 - Truncated READMEs now count as evidence, and `replace_candidate_with_readme` records README evidence for its target; candidates retired by a replacement or never admitted by the candidate budget no longer force a spurious `partial` verdict.
@@ -38,7 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `github-scout-agent web` now opens the default browser automatically; pass `--no-browser` (or set `GITHUB_SCOUT_NO_BROWSER=1`) to keep it headless.
 - First run of the settings dialog pre-selects the DeepSeek preset and prefills its endpoint and model, so a new user only has to paste an API key.
 - Web history now persists to `%APPDATA%\GitHubScoutAgent\web_history.jsonl` instead of depending on the current working directory, so an installation under `Program Files` stays writable.
-- Test suite expanded to 234 cases (32 configuration/settings tests including 5 keyless-loopback cases, 4 frozen-launcher tests, and 6 research-loop evidence/query tests).
+- Test suite expanded to 235 cases (33 configuration/settings tests including 5 keyless-loopback cases, 4 frozen-launcher tests, and 6 research-loop evidence/query tests).
 - Build assets are isolated in `packaging/`; `build/` and `dist/` remain git-ignored, so the source tree keeps a single implementation.
 - Converted all internal documentation links in `README.md` to clean repository-relative paths.
 - Updated `README.md` header badge to official `Apache-2.0`.

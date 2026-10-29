@@ -545,3 +545,20 @@ def test_update_settings_marks_an_unverifiable_endpoint_as_unknown(
     assert verification["result"] == "unknown"
     assert response.json()["ready"] is True
 
+
+def test_settings_page_lists_every_model_in_a_select_not_a_datalist() -> None:
+    template = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "github_scout_agent"
+        / "templates"
+        / "index.html"
+    )
+    html = template.read_text(encoding="utf-8")
+    assert 'id="model-select"' in html
+    # a <datalist> filters by whatever is already typed into the field, which made
+    # an endpoint returning 183 models look like it only offered a couple.
+    assert "<datalist" not in html
+    assert "gsa.models.v1:" in html
+    assert "syncModelSelect();" in html
+

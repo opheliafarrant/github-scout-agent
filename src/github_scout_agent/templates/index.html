@@ -108,6 +108,7 @@ dialog::backdrop{background:rgba(1,4,9,.72)}
 .model-row button{background:var(--code-bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:0 12px;font:12px var(--font);cursor:pointer;white-space:nowrap}
 .model-row button:hover:not(:disabled){border-color:var(--accent)}
 .model-row button:disabled{opacity:.6;cursor:progress}
+.model-select{width:100%;margin-top:8px}
 .field.inline{flex-direction:row;align-items:center;gap:8px}
 details.advanced{border-top:1px solid var(--border);padding-top:12px;margin:4px 0 14px}
 details.advanced summary{cursor:pointer;font-size:13px;color:var(--muted);margin-bottom:12px}
@@ -172,18 +173,18 @@ Example: Find three open-source Python AI agents that can search GitHub reposito
 
     <div class="field">
       <label for="set-base-url">API 地址（Base URL）</label>
-      <input id="set-base-url" type="url" spellcheck="false" autocomplete="off" placeholder="https://api.deepseek.com/v1">
+      <input id="set-base-url" type="url" spellcheck="false" autocomplete="off" placeholder="https://api.deepseek.com/v1" oninput="syncModelSelect()">
       <span class="help">必须使用 HTTPS；仅 localhost / 127.0.0.1 允许 HTTP。</span>
     </div>
 
     <div class="field">
       <label for="set-model">模型名称</label>
       <div class="model-row">
-        <input id="set-model" type="text" list="model-options" spellcheck="false" autocomplete="off" placeholder="deepseek-chat">
+        <input id="set-model" type="text" spellcheck="false" autocomplete="off" placeholder="deepseek-chat">
         <button type="button" id="fetch-models" onclick="fetchModels()">获取模型列表</button>
       </div>
-      <datalist id="model-options"></datalist>
-      <span class="help" id="model-help">填好地址与 Key 后点「获取模型列表」，可从该服务下拉选择；也可直接手动填写。</span>
+      <select id="model-select" class="model-select" aria-label="该服务列出的模型" onchange="pickModel(this)" hidden></select>
+      <span class="help" id="model-help">填好地址与 Key 后点「获取模型列表」，下拉框会列出该服务的全部模型；列表按 API 地址缓存在本机，刷新后仍可用；也可直接手动填写。</span>
     </div>
 
     <div class="field">
@@ -263,6 +264,59 @@ async function refreshConfig(){
 function setVal(id, v){ document.getElementById(id).value = v; }
 function getVal(id){ return document.getElementById(id).value.trim(); }
 
+// 模型列表按 API 地址缓存在本机（不含 Key），刷新页面/重开设置后仍可直接选择
+const MODEL_CACHE_PREFIX = 'gsa.models.v1:';
+
+function modelCacheKey(baseUrl){
+  return MODEL_CACHE_PREFIX + String(baseUrl || '').trim().replace(/\/+$/, '').toLowerCase();
+}
+
+function readModelCache(baseUrl){
+  if(!baseUrl) return [];
+  try{
+    const raw = window.localStorage.getItem(modelCacheKey(baseUrl));
+    if(!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter(function(item){ return typeof item === 'string' && item; })
+      : [];
+  }catch(e){ return []; }
+}
+
+function writeModelCache(baseUrl, models){
+  if(!baseUrl) return;
+  try{ window.localStorage.setItem(modelCacheKey(baseUrl), JSON.stringify(models)); }catch(e){}
+}
+
+function renderModelSelect(models){
+  const select = document.getElementById('model-select');
+  select.innerHTML = '';
+  if(!models.length){ select.hidden = true; return; }
+  const head = document.createElement('option');
+  head.value = '';
+  head.textContent = '— 从 ' + models.length + ' 个模型中选择 —';
+  select.appendChild(head);
+  for(const id of models){
+    const option = document.createElement('option');
+    option.value = id;
+    option.textContent = id;
+    select.appendChild(option);
+  }
+  select.value = '';
+  select.hidden = false;
+}
+
+function syncModelSelect(){
+  renderModelSelect(readModelCache(getVal('set-base-url')));
+}
+
+function pickModel(select){
+  if(!select.value) return;
+  setVal('set-model', select.value);
+  select.value = '';
+  setSettingsStatus('已选择「' + getVal('set-model') + '」，点“保存配置”生效。', 'ok');
+}
+
 function detectPreset(base){
   if(!base) return 'custom';
   const normalized = base.replace(/\/+$/,'').toLowerCase();
@@ -279,6 +333,7 @@ function applyPreset(){
   if(!preset) return;
   setVal('set-base-url', preset.base);
   setVal('set-model', preset.model);
+  syncModelSelect();
 }
 
 function setSettingsStatus(text, kind){
@@ -298,6 +353,7 @@ async function openSettings(){
     const s = await r.json();
     setVal('set-base-url', s.base_url || '');
     setVal('set-model', s.model || '');
+    syncModelSelect();
     setVal('set-api-key', '');
     document.getElementById('set-api-key').placeholder =
       s.has_key ? '已保存（' + (s.key_hint || '****') + '），留空保持不变' : '请输入 API Key';
@@ -358,30 +414,23 @@ async function fetchModels(){
       setSettingsStatus(MODEL_LIST_REASONS[data.reason] || ('获取失败：' + (data.message || '未知错误')), 'error');
       return;
     }
-    const list = document.getElementById('model-options');
-    list.innerHTML = '';
-    for(const id of data.models){
-      const option = document.createElement('option');
-      option.value = id;
-      list.appendChild(option);
-    }
+    const models = data.models;
+    writeModelCache(baseUrl, models);
+    renderModelSelect(models);
     const input = document.getElementById('set-model');
-    input.placeholder = '点击选择（共 ' + data.count + ' 个模型）';
-    // 浏览器会按输入框里的文字过滤 datalist：旧值不在列表里时，用户会误以为"只返回了几个模型"
+    input.placeholder = '可手动填写或从下方下拉框选择';
     const current = getVal('set-model');
-    const listed = current && data.models.indexOf(current) !== -1;
+    const listed = !!current && models.indexOf(current) !== -1;
     let note = '';
     if(current && !listed){
-      setVal('set-model', '');
-      note = ' 原填写的「' + current + '」不在该服务的模型列表中，已清空，请点击输入框重新选择。';
+      note = ' 当前填写的「' + current + '」不在该服务返回的列表中，请确认模型名是否写错。';
     }
     document.getElementById('model-help').textContent =
-      '已从该服务获取 ' + data.count + ' 个模型：点击输入框可下拉选择；输入文字会按关键字筛选，清空输入框才显示全部。';
+      '已从该服务获取 ' + models.length + ' 个模型：从下方下拉框可直接选择（全部可见，不受输入框文字过滤）；该列表按 API 地址缓存在本机，刷新页面后仍可用。';
     setSettingsStatus(
-      '已获取 ' + data.count + ' 个可用模型' + (data.used_saved_key ? '（使用已保存的 Key 验证）' : '') + '。' + note,
+      '已获取 ' + models.length + ' 个可用模型' + (data.used_saved_key ? '（使用已保存的 Key 验证）' : '') + '。' + note,
       note ? 'error' : 'ok'
     );
-    if(!current || !listed) input.focus();
   }catch(e){
     setSettingsStatus('获取失败：' + e.message, 'error');
   }finally{
