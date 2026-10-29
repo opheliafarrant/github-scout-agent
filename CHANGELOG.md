@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ---
 
 ## [Unreleased]
+### Added
+- **Optional Authenticode Signing Hook**: `packaging/sign_artifacts.py` signs the frozen executable and the installer when `SIGN_CERT_PATH` (PFX bundle) or `SIGN_CERT_SHA1` (certificate-store thumbprint) is set, then verifies each signature; with no certificate it prints why it skipped and exits 0, so unsigned builds behave exactly as before. `packaging/build_release.py` runs PyInstaller → optional signing → Inno Setup → SHA-256 report in one command, and `packaging/installer.iss` accepts `/DMyBuildDir=` so a build can package an alternate output directory.
+
+### Changed
+- **First-Run Guidance for Unsigned Builds**: the README installer section and the v1.2.0 release notes now explain how to clear the SmartScreen "unknown publisher" prompt (More info → Run anyway, file Properties → Unblock, `Unblock-File`) and how to verify the SHA-256 before running, instead of leaving recipients to guess.
 
 ## [1.2.0] - 2026-10-29
 ### Added

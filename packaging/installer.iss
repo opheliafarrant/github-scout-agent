@@ -12,7 +12,11 @@
 #define MyAppPublisher "Ophelia Farrant"
 #define MyAppURL "https://github.com/opheliafarrant/github-scout-agent"
 #define MyAppExeName "GitHubScoutAgent.exe"
-#define MyBuildDir "..\dist\GitHubScoutAgent"
+; Overridable so a build can package an alternate output directory:
+;   ISCC.exe /DMyBuildDir="D:\out\GitHubScoutAgent" packaging\installer.iss
+#ifndef MyBuildDir
+  #define MyBuildDir "..\dist\GitHubScoutAgent"
+#endif
 
 [Setup]
 AppId={{7C4A1E93-5B62-4F0D-9A71-2D6E8B3C5F14}

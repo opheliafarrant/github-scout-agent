@@ -56,7 +56,14 @@
 
 - **只读公开边界**：仅对 `api.github.com` 发 GET，不涉及私有仓库与写操作；
 - **匿名配额**：未携带 GitHub Token 时每小时 60 次 core / 10 次 search，配额耗尽时报告会降级为 `partial` 并标注 rate limited；
-- **未做代码签名**：安装包与可执行文件未签名，Windows SmartScreen 可能提示“未知发布者”，选择“仍要运行”即可；
+- **未做代码签名**：安装包与可执行文件未签名，Windows SmartScreen 只会对“浏览器下载的副本”提示「未知发布者」。三种正规处理方式：
+  1. 弹窗点「更多信息」→「仍要运行」；
+  2. 右键 exe →「属性」→ 勾选底部「解除锁定 / Unblock」→「确定」，此后不再提示；
+  3. PowerShell 批量解除下载标记：`Unblock-File .\GitHubScoutAgent-1.2.0-setup.exe`（或 `Get-ChildItem -Recurse -Include *.exe | Unblock-File`）。
+
+  解除提示前建议先校验完整性：`Get-FileHash .\GitHubScoutAgent-1.2.0-setup.exe -Algorithm SHA256`，结果应为 `23EA362066427DF990B07515D09D7D15049BEA27D76D1664B218F96CE5077A15`。
+
+  开发者侧若已持有代码签名证书，`python packaging/build_release.py` 会自动签名（设置 `SIGN_CERT_PATH` 或 `SIGN_CERT_SHA1`，可选 `SIGN_CERT_PASSWORD`、`SIGN_TIMESTAMP_URL`、`SIGNTOOL`）；未配置证书时静默跳过，构建行为与之前完全一致；
 - **仅 Windows x64**：macOS / Linux 请从源码运行（`github-scout-agent web`）。
 
 ---

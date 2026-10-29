@@ -8,6 +8,10 @@ Build from the repository root:
 Output: dist/GitHubScoutAgent/GitHubScoutAgent.exe (one directory, no console).
 The spec is intentionally kept here so that packaging assets stay out of the
 source tree and the application package keeps a single implementation.
+
+Signing is opt-in and is applied by packaging/build_release.py (see
+packaging/sign_artifacts.py): running PyInstaller on this spec directly always
+produces an unsigned executable, which is what local builds expect.
 """
 
 from pathlib import Path

@@ -8,7 +8,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/version-v1.2.0-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg" alt="Python Version">
-  <img src="https://img.shields.io/badge/tests-360%20passed-success.svg" alt="Test Status">
+  <img src="https://img.shields.io/badge/tests-372%20passed-success.svg" alt="Test Status">
   <img src="https://img.shields.io/badge/architecture-Read--Only%20GET%20%7C%20Zero--Execution-brightgreen.svg" alt="Architecture">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-brightgreen.svg" alt="License"></a>
 </p>
@@ -198,6 +198,21 @@ python -m PyInstaller packaging/github_scout_agent.spec --noconfirm
 - 静默安装：`GitHubScoutAgent-1.2.0-setup.exe /VERYSILENT /CURRENTUSER`。
 
 安装包由 `packaging/installer.iss` 经 Inno Setup 编译生成（`ISCC.exe packaging\installer.iss`，产物输出到 `dist/installer/`，均为构建产物、不入库）。
+
+**首次运行提示（未签名构建）**：v1.2.0 未做代码签名，因此 Windows SmartScreen 会对“从浏览器下载的副本”提示「未知发布者 / Windows 已保护你的电脑」（本机自行构建的产物没有下载标记，不会提示）。三种正规处理方式：
+
+1. 弹窗点「更多信息」→ 底部「仍要运行」；
+2. 右键安装包 →「属性」→ 勾选最下方「解除锁定 / Unblock」→「确定」，之后不再提示；
+3. PowerShell 批量解除下载标记：`Unblock-File .\GitHubScoutAgent-1.2.0-setup.exe`（或 `Get-ChildItem -Recurse -Include *.exe | Unblock-File`）。
+
+解除提示不等于跳过验证，建议先核对哈希再运行：
+
+```powershell
+Get-FileHash .\GitHubScoutAgent-1.2.0-setup.exe -Algorithm SHA256
+# 期望值见 Release 说明：23EA362066427DF990B07515D09D7D15049BEA27D76D1664B218F96CE5077A15
+```
+
+**一键构建（含可选签名钩子）**：`python packaging/build_release.py` 会依次执行 PyInstaller → 可选 Authenticode 签名 → Inno Setup → 打印产物 SHA-256。签名完全可选：设置 `SIGN_CERT_PATH`（PFX 路径）或 `SIGN_CERT_SHA1`（证书库指纹）即自动对 exe 与安装包执行 `signtool sign /fd sha256 /tr <时间戳>`，未设置则静默跳过并说明原因；`--no-sign` 强制不签名，`--dry-run` 只打印命令。`INNO_ISCC` 可覆盖 ISCC 路径，`SIGNTOOL` 可覆盖签名工具路径。
 
 ### 方式 B：CLI 命令行调研（适合无图形界面与脚本批处理）
 
