@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import os
+import threading
+import webbrowser
+
 import typer
 from pydantic import ValidationError
 
@@ -48,12 +52,17 @@ def config_command() -> None:
 def web_command(
     host: str = typer.Option("127.0.0.1", "--host", help="Bind address (default: 127.0.0.1)."),
     port: int = typer.Option(8080, "--port", help="Port (default: 8080)."),
+    no_browser: bool = typer.Option(False, "--no-browser", help="Do not open the default browser automatically."),
 ) -> None:
     """Start the local Web UI for interactive GitHub research."""
 
     from .web_server import start_server
 
-    typer.echo(f"GitHub Scout Agent Web UI → http://{host}:{port}")
+    url = f"http://{host}:{port}"
+    typer.echo(f"GitHub Scout Agent Web UI → {url}")
+    if not no_browser and os.environ.get("GITHUB_SCOUT_NO_BROWSER", "").strip().lower() not in {"1", "true", "yes"}:
+        typer.echo("Opening the default browser… (use --no-browser to disable)")
+        threading.Timer(1.0, lambda: webbrowser.open(url)).start()
     start_server(host=host, port=port)
 
 

@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - API keys and GitHub tokens are encrypted at rest with Windows DPAPI (stored as `dpapi:<ciphertext>`); all API responses return only masked hints (`sk-…abcd`) and never the plaintext secret.
 
 ### Changed
+- `github-scout-agent web` now opens the default browser automatically; pass `--no-browser` (or set `GITHUB_SCOUT_NO_BROWSER=1`) to keep it headless.
+- First run of the settings dialog pre-selects the DeepSeek preset and prefills its endpoint and model, so a new user only has to paste an API key.
 - Web history now persists to `%APPDATA%\GitHubScoutAgent\web_history.jsonl` instead of depending on the current working directory, so an installation under `Program Files` stays writable.
 - Test suite expanded to 205 cases (17 new configuration and settings-endpoint tests).
 - Converted all internal documentation links in `README.md` to clean repository-relative paths.

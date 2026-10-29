@@ -295,12 +295,14 @@ async function openSettings(){
       s.has_github_token ? '已保存，留空保持不变' : '可选，提高 GitHub API 速率上限';
     setVal('set-thinking', s.thinking_mode || 'disabled');
     document.getElementById('set-strict').checked = s.strict_tools !== false;
-    setVal('preset-select', detectPreset(s.base_url));
     document.getElementById('settings-path').textContent = s.settings_path || '本机';
+    const isFresh = !s.base_url && !s.model;
+    setVal('preset-select', isFresh ? 'deepseek' : detectPreset(s.base_url));
+    if(isFresh) applyPreset();
     setSettingsStatus(
       s.source === 'environment'
         ? '当前由环境变量提供配置；保存后环境变量仍然优先。'
-        : (s.ready ? '' : '填写下方三项后即可开始检索。'),
+        : (isFresh ? '已预填 DeepSeek 端点，填入 API Key 后保存即可。' : (s.ready ? '' : '填写下方三项后即可开始检索。')),
       ''
     );
   }catch(e){
