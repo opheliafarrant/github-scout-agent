@@ -8,7 +8,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/version-v1.1.0-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg" alt="Python Version">
-  <img src="https://img.shields.io/badge/tests-220%20passed-success.svg" alt="Test Status">
+  <img src="https://img.shields.io/badge/tests-230%20passed-success.svg" alt="Test Status">
   <img src="https://img.shields.io/badge/architecture-Read--Only%20GET%20%7C%20Zero--Execution-brightgreen.svg" alt="Architecture">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-brightgreen.svg" alt="License"></a>
 </p>
@@ -116,7 +116,8 @@ GitHub Scout Agent 采用标准的 OpenAI-compatible Tool Calling 协议，兼�
 启动 `github-scout-agent web` 后，点击右上角 **⚙ 设置**，或点击页面顶部「尚未配置模型接口」提示条中的「去配置」按钮：
 
 1. 选择服务预设（DeepSeek / 通义千问 / OpenAI / 本地 Ollama / 自定义），自动填入对应的 Base URL 与模型名；
-2. 填入 API Key，点击「保存」，徽章即刻变为 `✓ <model> ready`。**本地 Ollama 等回环端点不需要 Key**，选好预设直接保存即可。
+2. 填入 API Key 后点「**获取模型列表**」，面板会向该端点请求 `/models` 并把可选模型装进下拉框——不用再猜模型名（如 `qwen-max`、`deepseek-ai/DeepSeek-V3`）；也可继续手动输入；
+3. 点击「保存」，徽章即刻变为 `✓ <model> ready`。**本地 Ollama 等回环端点不需要 Key**，选好预设直接保存即可。
 
 配置文件位于 `%APPDATA%\GitHubScoutAgent\config.json`：
 
@@ -132,7 +133,7 @@ GitHub Scout Agent 采用标准的 OpenAI-compatible Tool Calling 协议，兼�
 ```powershell
 # 必需：模型服务 Base URL 与 API Key
 $env:GITHUB_SCOUT_MODEL_BASE_URL="https://api.deepseek.com"     # 或通义千问等兼容端点
-$env:GITHUB_SCOUT_MODEL="deepseek-flash"                        # 或 qwen-max, gpt-4o 等
+$env:GITHUB_SCOUT_MODEL="deepseek-chat"                         # 或 qwen-max, gpt-4o 等
 $env:GITHUB_SCOUT_MODEL_API_KEY="sk-your-model-api-key"
 
 # 可选：模型行为微调
@@ -173,7 +174,7 @@ github-scout-agent web --host 127.0.0.1 --port 8080
 - **结构化结果**：渲染候选项目卡片（Stars、License、主要语言）、横向对比表格与决策建议；
 - **一键导出**：支持 `📋 Copy Markdown` 一键复制完整报告，或 `📥 Export .md` 直接下载为本地 Markdown 文件；
 - **历史记录复查**：左侧边栏自动记录本地运行历史，随时点击复查历史调研成果；
-- **图形化配置**：右上角 ⚙ 设置面板支持预设端点选择、API Key 加密保存与即时生效，无需手工设置环境变量或重启进程。
+- **图形化配置**：右上角 ⚙ 设置面板支持预设端点选择、模型列表下拉选择（读取端点 `/models`）、API Key 加密保存与即时生效，无需手工设置环境变量或重启进程。
 
 #### 🖥️ 桌面版（Windows .exe，分发给他人时使用）
 
@@ -229,7 +230,7 @@ github-scout-agent gate-b --dry-run
 ```powershell
 pytest -m "not live_github" --tb=short
 ```
-- **测试结果**：**220 passed, 1 deselected**（耗时 ~8.0 秒，100% 通过）。
+- **测试结果**：**230 passed, 1 deselected**（耗时 ~7.7 秒，100% 通过）。
 - **覆盖核心机制**：
   - 七大 GitHub 工具参数 Pydantic 校验与 GET-only 拦截；
   - 预算硬性拦截、候选容量满载与平滑降级；

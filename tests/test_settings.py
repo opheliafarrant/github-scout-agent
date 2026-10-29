@@ -346,3 +346,99 @@ def test_remote_client_still_rejects_a_missing_key() -> None:
         )
 
     assert excinfo.value.code == "model_not_configured"
+
+
+def test_model_list_route_returns_models_for_the_submitted_endpoint(
+    client: TestClient, settings_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake(base_url: str, api_key: str | None = None, **_: object) -> list[str]:
+        captured["base_url"] = base_url
+        captured["api_key"] = api_key
+        return ["deepseek-chat", "deepseek-reasoner"]
+
+    monkeypatch.setattr("github_scout_agent.web_server.list_model_ids", fake)
+    response = client.post(
+        "/api/settings/models",
+        json={"model_base_url": "https://api.deepseek.com/v1", "model_api_key": "sk-live-probe"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["count"] == 2
+    assert payload["models"] == ["deepseek-chat", "deepseek-reasoner"]
+    assert payload["used_saved_key"] is False
+    assert captured == {"base_url": "https://api.deepseek.com/v1", "api_key": "sk-live-probe"}
+    assert "sk-live-probe" not in json.dumps(payload)
+
+
+def test_model_list_route_falls_back_to_the_saved_key(
+    client: TestClient, settings_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "github_scout_agent.web_server.read_settings",
+        lambda: {"model_base_url": "https://example.test/v1", "model_api_key": "sk-saved-key"},
+    )
+    seen: dict[str, object] = {}
+
+    def fake(base_url: str, api_key: str | None = None, **_: object) -> list[str]:
+        seen["base_url"] = base_url
+        seen["api_key"] = api_key
+        return ["saved-model"]
+
+    monkeypatch.setattr("github_scout_agent.web_server.list_model_ids", fake)
+    payload = client.post("/api/settings/models", json={}).json()
+    assert payload["ok"] is True
+    assert payload["used_saved_key"] is True
+    assert seen == {"base_url": "https://example.test/v1", "api_key": "sk-saved-key"}
+
+
+def test_model_list_route_reports_a_rejected_key(
+    client: TestClient, settings_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fake(base_url: str, api_key: str | None = None, **_: object) -> list[str]:
+        raise ModelAdapterError(
+            "model endpoint rejected the API key: Incorrect API key provided",
+            code="model_list_auth",
+            category="auth",
+            status_code=401,
+        )
+
+    monkeypatch.setattr("github_scout_agent.web_server.list_model_ids", fake)
+    response = client.post(
+        "/api/settings/models",
+        json={"model_base_url": "https://maas.example.test/compatible-mode/v1", "model_api_key": "sk-bad"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["reason"] == "auth"
+    assert payload["status_code"] == 401
+    assert "Incorrect API key" in payload["message"]
+
+
+def test_model_list_route_maps_an_unsupported_route(
+    client: TestClient, settings_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fake(base_url: str, api_key: str | None = None, **_: object) -> list[str]:
+        raise ModelAdapterError(
+            "model endpoint does not expose a /models route", code="model_list_unsupported", category="compatibility"
+        )
+
+    monkeypatch.setattr("github_scout_agent.web_server.list_model_ids", fake)
+    payload = client.post("/api/settings/models", json={"model_base_url": "https://example.test/v1"}).json()
+    assert payload["ok"] is False
+    assert payload["reason"] == "unsupported"
+
+
+def test_model_list_route_rejects_an_insecure_endpoint(client: TestClient, settings_file: Path) -> None:
+    response = client.post("/api/settings/models", json={"model_base_url": "http://example.com/v1"})
+    assert response.status_code == 422
+    assert "HTTPS" in response.json()["detail"]
+
+
+def test_model_list_route_requires_an_endpoint(client: TestClient, settings_file: Path) -> None:
+    payload = client.post("/api/settings/models", json={}).json()
+    assert payload["ok"] is False
+    assert payload["reason"] == "invalid"

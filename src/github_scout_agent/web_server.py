@@ -34,7 +34,7 @@ from .config import (
 )
 from .events import AgentEvent, EventRecorder
 from .github_api import GitHubRestClient
-from .model_client import OpenAICompatibleClient
+from .model_client import ModelAdapterError, OpenAICompatibleClient, list_model_ids
 
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
@@ -314,6 +314,55 @@ async def update_settings(payload: SettingsPayload) -> dict:
 
     write_settings(merged)
     return _settings_view()
+
+
+class ModelListPayload(BaseModel):
+    """Probe payload: an explicit endpoint/key, or the values already saved."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model_base_url: str | None = Field(default=None, max_length=500)
+    model_api_key: str | None = Field(default=None, max_length=4096)
+
+
+_MODEL_LIST_REASONS = {
+    "model_list_auth": "auth",
+    "model_list_unsupported": "unsupported",
+    "model_list_timeout": "timeout",
+    "model_list_network": "network",
+    "model_list_payload": "payload",
+    "model_list_empty": "empty",
+}
+
+
+@web_app.post("/api/settings/models")
+async def list_available_models(payload: ModelListPayload) -> dict:
+    stored = read_settings()
+    base_url = (payload.model_base_url or "").strip() or str(stored.get("model_base_url") or "")
+    api_key = (payload.model_api_key or "").strip()
+    used_saved_key = False
+    if not api_key:
+        saved_key = stored.get("model_api_key")
+        if saved_key:
+            api_key = str(saved_key)
+            used_saved_key = True
+    if not base_url:
+        return {"ok": False, "reason": "invalid", "message": "请先填写 API 地址。", "used_saved_key": used_saved_key}
+    try:
+        AppConfig(model_base_url=base_url)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=_validation_detail(exc)) from exc
+    try:
+        models = await asyncio.to_thread(list_model_ids, base_url, api_key or None)
+    except ModelAdapterError as exc:
+        return {
+            "ok": False,
+            "reason": _MODEL_LIST_REASONS.get(exc.code, "unknown"),
+            "message": str(exc),
+            "status_code": exc.status_code,
+            "used_saved_key": used_saved_key,
+        }
+    return {"ok": True, "models": models, "count": len(models), "used_saved_key": used_saved_key}
 
 
 @web_app.post("/api/run")

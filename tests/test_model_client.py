@@ -12,7 +12,7 @@ from github_scout_agent.agent_models import AgentMessage, ToolCall
 from github_scout_agent.budget import RequestBudget
 from github_scout_agent.config import AppConfig
 from github_scout_agent.github_api import GitHubRestClient
-from github_scout_agent.model_client import ModelAdapterError, OpenAICompatibleClient
+from github_scout_agent.model_client import ModelAdapterError, OpenAICompatibleClient, list_model_ids
 from github_scout_agent.tool_registry import build_github_tool_registry
 
 
@@ -480,3 +480,60 @@ def test_model_client_does_not_retry_non_retryable_errors() -> None:
         client.complete([AgentMessage(role="user", content="hi")], [])
     assert caught.value.code == "authentication_error"
     assert calls == 1  # 401 is not retryable, no extra attempts
+
+
+def test_authentication_error_carries_the_provider_message_masked() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            401,
+            json={"error": {"message": "Authentication Fails, Your api key: sk-abcdef123456 is invalid"}},
+            request=request,
+        )
+
+    client, _ = _client(handler)
+    with client, pytest.raises(ModelAdapterError) as caught:
+        client.complete([AgentMessage(role="user", content="hi")], [])
+    assert caught.value.code == "authentication_error"
+    assert "is invalid" in str(caught.value)
+    assert "sk-abcdef123456" not in str(caught.value)
+
+
+def test_list_model_ids_reads_the_models_route() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(
+            200,
+            json={"data": [{"id": "deepseek-chat"}, {"id": "deepseek-reasoner"}, {"id": "deepseek-chat"}]},
+            request=request,
+        )
+
+    ids = list_model_ids("https://api.deepseek.com/v1", "sk-secret", transport=httpx.MockTransport(handler))
+    assert ids == ["deepseek-chat", "deepseek-reasoner"]
+    assert str(seen[0].url) == "https://api.deepseek.com/v1/models"
+    assert seen[0].headers["authorization"] == "Bearer sk-secret"
+
+
+def test_list_model_ids_masks_the_key_in_auth_errors() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            401,
+            json={"error": {"message": "Authentication Fails, Your api key: sk-abcdef123456 is invalid"}},
+            request=request,
+        )
+
+    with pytest.raises(ModelAdapterError) as caught:
+        list_model_ids("https://api.deepseek.com/v1", "sk-abcdef123456", transport=httpx.MockTransport(handler))
+    assert caught.value.code == "model_list_auth"
+    assert "sk-***" in str(caught.value)
+    assert "sk-abcdef123456" not in str(caught.value)
+
+
+def test_list_model_ids_reports_an_unsupported_route() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"error": {"message": "not found"}}, request=request)
+
+    with pytest.raises(ModelAdapterError) as caught:
+        list_model_ids("https://api.deepseek.com/v1", None, transport=httpx.MockTransport(handler))
+    assert caught.value.code == "model_list_unsupported"

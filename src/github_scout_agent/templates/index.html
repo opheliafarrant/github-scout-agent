@@ -103,6 +103,11 @@ dialog::backdrop{background:rgba(1,4,9,.72)}
 .field input,.field select{background:var(--code-bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px 10px;font:13px var(--font)}
 .field input:focus,.field select:focus{outline:none;border-color:var(--accent)}
 .field .help{font-size:11px;color:var(--muted)}
+.model-row{display:flex;gap:8px}
+.model-row input{flex:1;min-width:0}
+.model-row button{background:var(--code-bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:0 12px;font:12px var(--font);cursor:pointer;white-space:nowrap}
+.model-row button:hover:not(:disabled){border-color:var(--accent)}
+.model-row button:disabled{opacity:.6;cursor:progress}
 .field.inline{flex-direction:row;align-items:center;gap:8px}
 details.advanced{border-top:1px solid var(--border);padding-top:12px;margin:4px 0 14px}
 details.advanced summary{cursor:pointer;font-size:13px;color:var(--muted);margin-bottom:12px}
@@ -173,7 +178,12 @@ Example: Find three open-source Python AI agents that can search GitHub reposito
 
     <div class="field">
       <label for="set-model">模型名称</label>
-      <input id="set-model" type="text" spellcheck="false" autocomplete="off" placeholder="deepseek-chat">
+      <div class="model-row">
+        <input id="set-model" type="text" list="model-options" spellcheck="false" autocomplete="off" placeholder="deepseek-chat">
+        <button type="button" id="fetch-models" onclick="fetchModels()">获取模型列表</button>
+      </div>
+      <datalist id="model-options"></datalist>
+      <span class="help" id="model-help">填好地址与 Key 后点「获取模型列表」，可从该服务下拉选择；也可直接手动填写。</span>
     </div>
 
     <div class="field">
@@ -308,6 +318,66 @@ async function openSettings(){
     );
   }catch(e){
     setSettingsStatus('无法读取当前配置：' + e.message, 'error');
+  }
+}
+
+const MODEL_LIST_REASONS = {
+  auth: '该 Key 被服务端拒绝（401/403）。请确认 Key 与地址属于同一个服务，或到控制台重新生成 Key。',
+  unsupported: '该服务未提供 /models 接口，无法自动列取，请手动填写模型名称。',
+  network: '无法连接到该地址，请检查网络、地址拼写或代理设置。',
+  timeout: '连接超时，请检查网络或地址。',
+  payload: '服务返回的模型列表无法解析，请手动填写模型名称。',
+  empty: '该服务返回了空的模型列表，请手动填写模型名称。',
+  invalid: '请先填写 API 地址。',
+};
+
+async function fetchModels(){
+  const btn = document.getElementById('fetch-models');
+  if(btn.disabled) return;
+  const baseUrl = getVal('set-base-url');
+  const apiKey = getVal('set-api-key');
+  if(!baseUrl){ setSettingsStatus(MODEL_LIST_REASONS.invalid, 'error'); return; }
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '获取中…';
+  setSettingsStatus('正在向该服务查询可用模型…', '');
+  try{
+    const body = { model_base_url: baseUrl };
+    if(apiKey) body.model_api_key = apiKey;
+    const r = await fetch('/api/settings/models', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(body),
+    });
+    const data = await r.json().catch(function(){ return {}; });
+    if(!r.ok){
+      setSettingsStatus('获取失败：' + (data.detail || ('HTTP ' + r.status)), 'error');
+      return;
+    }
+    if(!data.ok){
+      setSettingsStatus(MODEL_LIST_REASONS[data.reason] || ('获取失败：' + (data.message || '未知错误')), 'error');
+      return;
+    }
+    const list = document.getElementById('model-options');
+    list.innerHTML = '';
+    for(const id of data.models){
+      const option = document.createElement('option');
+      option.value = id;
+      list.appendChild(option);
+    }
+    const current = getVal('set-model');
+    if(!current && data.models.length) setVal('set-model', data.models[0]);
+    document.getElementById('model-help').textContent =
+      '已从该服务获取 ' + data.count + ' 个模型，点击输入框直接下拉选择，也可以手动输入。';
+    setSettingsStatus(
+      '已获取 ' + data.count + ' 个可用模型' + (data.used_saved_key ? '（使用已保存的 Key 验证）' : '') + '。',
+      'ok'
+    );
+  }catch(e){
+    setSettingsStatus('获取失败：' + e.message, 'error');
+  }finally{
+    btn.disabled = false;
+    btn.textContent = original;
   }
 }
 

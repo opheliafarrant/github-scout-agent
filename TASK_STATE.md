@@ -11,7 +11,7 @@
   - F1-02: 运行环境确认：Python 3.13.5、pip 25.1.1、Git 2.53.0；核心依赖 httpx 0.28.1、pydantic 2.14.1、typer 0.27.3、fastapi 0.115+、uvicorn 0.30+、pytest 8.4.2。
   - F1-03: 七大 GitHub 只读工具固定：`search_public_repositories`、`get_public_repository`、`get_known_repository`、`get_public_readme`、`replace_candidate_with_readme`、`get_repository_license`、`get_repository_languages_and_topics`，限制官方 `api.github.com`、公开仓库、GET-only 与 64 KiB 流式截断保护。
   - F1-04: 多模型端点兼容性已实测 [E3]: DeepSeek (`deepseek-flash`) 与 Qwen-Max (`qwen-max`) 真实链路在线验收全部通过。
-  - F1-05: 离线测试与自动化套件：完整自动化回归 `220 passed, 1 deselected, 1 warning in 8.01s` [E3: pytest]，compileall 零错误，语法与协议全面自洽。
+  - F1-05: 离线测试与自动化套件：完整自动化回归 `230 passed, 1 deselected, 1 warning in 7.69s` [E3: pytest]，compileall 零错误，语法与协议全面自洽。
   - F1-06: 缺陷与时序修复已固化：B1 闭包晚绑定、B2 Callable 类型、B3 None 守卫、B4 Gate A dict 纯函数构建、M1 thinking_mode 字面量校验、P0 提示词时序引导、P0 预算放宽可配。
   - F1-07: 候选发现与采纳机制完全解耦（Commit 822c616）：搜索结果不再自动锁定候选容量；仅在显式调查时消耗配额；证据门控拦截过早停步。
   - F1-08: Q1~Q3 深度修复与意图穿透固化：空结果促发更宽泛查询；消除空候选提前收尾；README 关键词强制 require_candidate_readme 门控。
@@ -32,6 +32,7 @@
 - F1-23: 桌面成品 UI/功能审计修复固化 [E3: 214 passed；重建 exe 后 CDP 真实浏览器复测：console 零报错、Ollama 无 Key → ready:true 且 run 越过 not_configured 进入 network_error、空任务给出提示]：修复 4 项真实缺陷——(1) 回环端点（Ollama/LM Studio/vLLM）无 Key 时被判定 not_configured，预设可选但永远跑不起来（config.model_ready 与 OpenAICompatibleClient 双门控，现允许 loopback 无 Key 且省略 Authorization 头）；(2) 页面缺 favicon 导致每次加载 404；(3) 四个预算输入框 label 无 for/id 关联、任务输入框缺可访问名；(4) 空任务点击开始静默无反馈。新增 5 个回归单测覆盖密钥无关回环放行与远端仍强制 Key。
   - F1-24: 桌面成品真实模型端到端验收 [E3: 冻结 exe + DeepSeek `deepseek-chat`，真实无头 Chrome/CDP 驱动 127.0.0.1:8080]：设置面板配置 DeepSeek 后 ready:true（密钥 DPAPI 落盘，磁盘 grep 明文 0 命中）；单条 143 字符查询 57.5 秒完成（status=completed / termination=model_finalized），产出 25,209 字符报告、页面渲染 23,555 字符、console 零报错；预算 3/3 候选、14/20 GitHub、11/12 模型、response 233,350/262,144 字节（89%）；历史写入 `%APPDATA%\GitHubScoutAgent\web_history.jsonl`（1 条 completed）。诚实边界：末个候选 README 因总响应字节预算耗尽报 response_too_large（已实测复现），报告据此自标 Completeness: partial；模型自选查询词泛化为 “multi-agent python framework”，偏离任务意图（见 P-03）。
   - F1-25: P-03 检索策略与预算分配修复固化 [E3: 220 passed；冻结 exe + DeepSeek 复跑同一基线任务：36.8 秒 completed/model_finalized，报告 19,569 字符、Completeness: complete，response_bytes 27,416（修复前 233,350，−88%），model 10/12、GitHub 11/20，查询词 github repository search agent / github readme analyzer agent / code search agent python / github repo recommender 全部对题]：三根因三修复——(1) 查询漂移：policy 注入 Query fidelity / Query coverage 两条硬约束，禁止把需求替换为更宽泛类别；(2) README 撑爆响应预算：改 application/vnd.github.raw 流式下载 + 字节上限（min(剩余预算, 12000*4+4096)），大 README 仅截断不再 response_too_large；(3) 证据闸门误判：接受 truncated 状态、把 replace_candidate_with_readme 的成功读取计为替代目标证据、并把「已替换掉的候选」与「候选容量未接纳（candidate_capacity_full）的候选」排除出闸门，消除 stale gap。报告第 3 节如实列出两个候选 README 因容量未取到、仅据元数据排除。
+  - F1-26: 设置面板模型列表下拉与鉴权失败可诊断化固化 [E3: 230 passed；重建 exe 后 curl + CDP 实测]：新增 `POST /api/settings/models`（POST 而非 GET 以免密钥进 URL/日志；请求体缺 Key 时复用已保存 Key，返回 `used_saved_key`；密钥永不回传）；`model_client.list_model_ids` 走 OpenAI 兼容 `/models`，按 401/403→auth、404/405/501→unsupported、超时/网络/协议分别归类，上限 200 个模型；前端模型框改 `<input list>` + datalist，点「获取模型列表」即下拉选择，失败按 reason 给中文可执行提示（含"该服务未提供 /models，请手动填写"）；另把 provider 原文（如 "Incorrect API key provided"）附加到 authentication_error/model_http_error 消息并对 `sk-*` 掩码。实测：桩服务 good key → `{ok:true,count:3}` 且 UI datalist 出现 3 项、状态"已获取 3 个可用模型"；坏 key → `{ok:false,reason:"auth",status_code:401}` 且 UI 红字提示；真实端点 `https://maas.qianwenaiapi.com/compatible-mode/v1` + 现存 Key → 401 "Incorrect API key provided. For details, see: https://help.aliyun.com/zh/model-studio/error-code#apikey-error"（判定为 Key 无效，非地址错误）。
 - F2 Decision Baseline (已批准架构与决策边界):
   - F2-01 (D1): CLI 与本地 Web UI (FastAPI+SSE) 双入口；采用 PyInstaller + Inno Setup 的轻量桌面分发（用户 2026-10-29 授权修订，原条款「不采用桌面端安装包」废止；仍不采用 Electron/Tauri 等重型桌面框架）。
   - F2-02 (D2): 严格只读与公开边界；支持无 Token (60次/h) 与用户只读 Token (5000次/h)；Token 不进模型/日志/报告/Git。
@@ -44,7 +45,8 @@
   - F3-Release-1.1 (Current Release Anchor): `71802a9` (Git Tag `v1.1.0` 正式版基线，含功能冻结 `c32d17f`)。
   - F3-Master-Dev: `master` 分支头，承载后发布阶段维保提交与文档迭代；后续 Agent 严禁将 master 提交与已发布的冻结 Tag 混淆。
 ## 3. Current Engineering Flow and Impediments
-- Current Impediment / Stop Point: 无阻碍。T55 Phase B 已交付（双击即用、无控制台、单实例唤浏览器）；T58 P-03 修复已闭环（220 通过，E2E complete）；Phase C Inno Setup 安装包待执行；代码签名（Phase D）为可选项。
+- Current Impediment / Stop Point: 无阻碍。T55 Phase B 已交付（双击即用、无控制台、单实例唤浏览器）；T58 P-03 修复已闭环（220 通过，E2E complete）；T59 设置面板模型下拉与鉴权诊断已交付（230 通过）；Phase C Inno Setup 安装包待执行；代码签名（Phase D）为可选项。
+- [x] T59: 设置面板模型列表下拉 + 鉴权失败可诊断：新增 POST /api/settings/models 与 list_model_ids、datalist 下拉与 reason 映射提示、上游错误原文透出（掩码）；新增 10 个回归测试（6 路由 + 4 客户端）[E3: 230 passed；exe 重建后 curl + CDP 双路径实测]。
 - [ ] T56: Inno Setup 安装包（Phase C）-> 目标产物: packaging/installer.iss + setup.exe；含开始菜单/桌面快捷方式、卸载项、安装时静默写入仅限 127.0.0.1 的入站防火墙规则（避免首次运行弹窗）。
 - [x] T58: P-03 修复（检索策略 + README 预算 + 证据闸门）：policy 增 query fidelity/coverage，禁止泛化替代；README 改 raw 流式字节上限下载；闸门接受 truncated、认 replace 票据、排除被替换与容量未接纳候选；新增 4 个回归测试（大 README 字节上限、raw 文本、预算耗尽、truncated 计为证据、替换/容量剔除）[E3: 220 passed；E2E Completeness: complete]。
 - [x] T57: 桌面成品 UI/功能审计与缺陷修复：用真实无头 Chrome 走查首屏/设置/预设/校验/保存/空任务全链路，修复回环端点无 Key、favicon 404、label 关联、空任务提示四项，重建 exe 复测零 console 报错 [E3: 214 passed]。
