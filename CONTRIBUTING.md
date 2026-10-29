@@ -65,6 +65,25 @@ python -m pytest tests/test_web_server.py -q
 
 ---
 
+## 📦 Desktop Build (Windows)
+
+The distributable desktop app is built from the same source tree; no code is duplicated. Build assets live in `packaging/`, build output stays in `build/` and `dist/` (both git-ignored).
+
+```powershell
+pip install "pyinstaller>=6.11,<7"
+python -m PyInstaller packaging/github_scout_agent.spec --noconfirm
+```
+
+Result: `dist/GitHubScoutAgent/GitHubScoutAgent.exe` — a windowed (no console) one-directory build that starts the local Web UI on `127.0.0.1:8080` and opens the default browser. Launching it again while it is running focuses the existing instance instead of starting a second server.
+
+Layout rules:
+- `packaging/github_scout_agent.spec` — PyInstaller recipe (bundles `templates/index.html`, uvicorn runtime imports, version resource).
+- `packaging/launcher.py` — frozen entry point (implied `web` subcommand, port probing, single-instance focus, stdout redirection for windowed builds).
+- `packaging/version_info.txt` — Windows version resource shown in the file properties dialog.
+- Never commit `build/` or `dist/`.
+
+---
+
 ## 📝 Commit Guidelines
 
 We follow the [Conventional Commits](https://www.conventionalcommits.org/) specification:

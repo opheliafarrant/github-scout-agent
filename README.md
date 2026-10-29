@@ -8,7 +8,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/version-v1.1.0-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg" alt="Python Version">
-  <img src="https://img.shields.io/badge/tests-205%20passed-success.svg" alt="Test Status">
+  <img src="https://img.shields.io/badge/tests-209%20passed-success.svg" alt="Test Status">
   <img src="https://img.shields.io/badge/architecture-Read--Only%20GET%20%7C%20Zero--Execution-brightgreen.svg" alt="Architecture">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-brightgreen.svg" alt="License"></a>
 </p>
@@ -175,6 +175,18 @@ github-scout-agent web --host 127.0.0.1 --port 8080
 - **历史记录复查**：左侧边栏自动记录本地运行历史，随时点击复查历史调研成果；
 - **图形化配置**：右上角 ⚙ 设置面板支持预设端点选择、API Key 加密保存与即时生效，无需手工设置环境变量或重启进程。
 
+#### 🖥️ 桌面版（Windows .exe，分发给他人时使用）
+
+不需要对方安装 Python，双击即用：
+
+```powershell
+# 由开发者打包（产物不入库）
+pip install "pyinstaller>=6.11,<7"
+python -m PyInstaller packaging/github_scout_agent.spec --noconfirm
+```
+
+产物为 `dist/GitHubScoutAgent/GitHubScoutAgent.exe`（无控制台窗口）。双击后：自动监听 `127.0.0.1:8080` → 自动打开默认浏览器 → 显示设置引导，对方只需粘贴 API Key 即可开始调研。若已有实例在运行，再次双击只会唤出浏览器而不会重复起服务。配置与历史落盘在 `%APPDATA%\GitHubScoutAgent\`，卸载程序不会带走个人配置。
+
 ### 方式 B：CLI 命令行调研（适合无图形界面与脚本批处理）
 
 直接在终端执行端到端调研。为防止误触产生网络流量，线上真实运行要求显式附带 `--confirm-live`：
@@ -217,7 +229,7 @@ github-scout-agent gate-b --dry-run
 ```powershell
 pytest -m "not live_github" --tb=short
 ```
-- **测试结果**：**205 passed, 1 deselected**（耗时 ~5.5 秒，100% 通过）。
+- **测试结果**：**209 passed, 1 deselected**（耗时 ~7.8 秒，100% 通过）。
 - **覆盖核心机制**：
   - 七大 GitHub 工具参数 Pydantic 校验与 GET-only 拦截；
   - 预算硬性拦截、候选容量满载与平滑降级；
