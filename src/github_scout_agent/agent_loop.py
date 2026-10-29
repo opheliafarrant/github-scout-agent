@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -78,6 +80,14 @@ class AgentLoop:
             "Priority rule: When you have discovered promising candidates from search, immediately "
             "investigate their details or README using candidate evidence tools. Do not continue "
             "repeatedly searching if candidates are already available to verify.",
+            "Search maturity & quality: When searching for production-ready libraries or frameworks, prioritize mature, "
+            "community-vetted repositories. Use sort='stars' or query qualifiers (e.g. 'stars:>50') when appropriate. "
+            "Avoid filling candidate spots with 0-star personal scratchpads or incomplete toy repositories if established "
+            "open-source implementations exist.",
+            "Prior knowledge verification: You may use your knowledge of well-known open-source projects (e.g. popular "
+            "frameworks) to guide targeted searches or direct lookups, but you must NEVER recommend or declare any "
+            "repository as a 'Verified Match' without actually investigating it using tools (such as get_public_repository, "
+            "get_known_repository, or get_public_readme) during this session.",
             "Query fidelity: every query must preserve the task's distinctive subject and constraints "
             "(the domain object, the capability and the platform). Never replace the requirement with a "
             "broader generic category: for 'an agent that searches GitHub repositories and analyses READMEs', "
@@ -572,6 +582,22 @@ class AgentLoop:
             "If fewer candidates qualify than requested, recommend only qualifying ones and explain why others were excluded. "
             "If no candidates qualify, state this clearly with the search evidence; do not fabricate recommendations.",
         ]
+        investigated = self._investigated_repository_ids(tool_results)
+        if investigated:
+            prompt_lines.append(
+                f"INVESTIGATED CANDIDATES WHITELIST: [{', '.join(investigated)}]. "
+                "STRICT GROUNDING RULES: "
+                "1) You may ONLY declare a repository as 'Verified Match' or 'Partial Match' if it is in the INVESTIGATED CANDIDATES WHITELIST above and supported by actual tool evidence. "
+                "2) Any repository NOT in this whitelist was NEVER inspected with tools in this session. You MUST NOT mark uninspected repositories as 'Verified Match' or recommend them as primary verified choices. "
+                "3) If you mention well-known projects from pre-trained memory that were not investigated via tools, you MUST explicitly categorize them under Evidence Gaps as 'Unverified Prior Knowledge' and declare that their current capabilities were not verified in this session."
+            )
+        else:
+            prompt_lines.append(
+                "INVESTIGATED CANDIDATES WHITELIST: None. "
+                "No repositories were successfully investigated with evidence tools in this session. "
+                "You MUST NOT invent candidates or claim any repository is a 'Verified Match'. "
+                "State clearly that evidence gathering did not complete or no qualifying repositories were investigated."
+            )
         if stop_reason == "rate_limited":
             prompt_lines.append(
                 "Note: Further repository research was stopped due to upstream GitHub API rate limiting. "
@@ -701,6 +727,44 @@ class AgentLoop:
             request_count=request_count,
         )
 
+    def _investigated_repository_ids(self, tool_results: list[ToolResult]) -> list[str]:
+        investigated: set[str] = set()
+        for candidate_id in self.budget.accepted_candidate_ids:
+            if candidate_id and not candidate_id.startswith("__anonymous_"):
+                investigated.add(candidate_id.casefold())
+        for result in tool_results:
+            if not result.ok:
+                continue
+            data = result.data
+            full_name = getattr(data, "full_name", None)
+            if isinstance(full_name, str) and "/" in full_name:
+                investigated.add(full_name.casefold())
+        for call, result in getattr(self, "_executed_calls", []):
+            if not result.ok:
+                continue
+            if call.name in {
+                "get_public_repository",
+                "get_public_readme",
+                "get_repository_license",
+                "get_repository_languages_and_topics",
+            }:
+                try:
+                    args = json.loads(call.arguments)
+                    owner, repo = args.get("owner"), args.get("repo")
+                    if owner and repo:
+                        investigated.add(f"{owner}/{repo}".casefold())
+                except (json.JSONDecodeError, AttributeError):
+                    pass
+            elif call.name == "replace_candidate_with_readme":
+                try:
+                    args = json.loads(call.arguments)
+                    t_owner, t_repo = args.get("target_owner"), args.get("target_repo")
+                    if t_owner and t_repo:
+                        investigated.add(f"{t_owner}/{t_repo}".casefold())
+                except (json.JSONDecodeError, AttributeError):
+                    pass
+        return sorted(investigated)
+
     def _result(
         self,
         status: str,
@@ -709,6 +773,19 @@ class AgentLoop:
         messages: list[AgentMessage],
         tool_results: list[ToolResult],
     ) -> AgentRunResult:
+        evidence_complete, evidence_gaps = self._evidence_complete(
+            tool_results,
+            getattr(self, "_executed_calls", []),
+        )
+        if final_text:
+            investigated = self._investigated_repository_ids(tool_results)
+            ungrounded = find_ungrounded_candidate_claims(final_text, investigated)
+            if ungrounded:
+                evidence_complete = False
+                for candidate in ungrounded:
+                    evidence_gaps.append(
+                        f"unverified candidate claimed as match or recommendation: {candidate}"
+                    )
         return AgentRunResult(
             status=status,
             termination_reason=termination_reason,
@@ -717,13 +794,76 @@ class AgentLoop:
             tool_results=tool_results,
             events=list(self.events.events),
             budget=self.budget.snapshot(),
-            evidence_complete=self._evidence_complete(
-                tool_results,
-                getattr(self, "_executed_calls", []),
-            )[0],
-            evidence_gaps=self._evidence_complete(
-                tool_results,
-                getattr(self, "_executed_calls", []),
-            )[1],
+            evidence_complete=evidence_complete,
+            evidence_gaps=evidence_gaps,
             feedback_trace=self.budget.feedback_trace(),
         )
+
+
+def extract_repo_slugs_from_text(s: str) -> set[str]:
+    slugs: set[str] = set()
+    for m in re.finditer(r"https?://(?:www\.)?github\.com/([A-Za-z0-9_-]+/[A-Za-z0-9_.-]+)", s):
+        slugs.add(m.group(1).rstrip(".").casefold())
+    stripped = re.sub(r"https?://[^\s\)]+", "", s)
+    for m in re.finditer(r"(?<![A-Za-z0-9_.-])([A-Za-z0-9_-]{1,39}/[A-Za-z0-9_.-]{1,100})(?![A-Za-z0-9_.-])", stripped):
+        slug = m.group(1).rstrip(".").casefold()
+        if not slug.startswith(("http/", "https/", "api/")):
+            slugs.add(slug)
+    return slugs
+
+
+def find_ungrounded_candidate_claims(
+    text: str | None,
+    investigated_repos: Iterable[str],
+) -> list[str]:
+    """Identify candidate repositories claimed as verified matches or recommendations without session evidence."""
+    if not text:
+        return []
+    investigated = {r.casefold() for r in investigated_repos if r}
+    ungrounded: list[str] = []
+    seen: set[str] = set()
+
+    verdict_pattern = re.compile(
+        r"(?:(?:qualification\s+)?verdict|status|判定|资格|状态)\s*[:：]?\s*(?:\*\*)?\s*(?:verified(?:\s+match)?|partial(?:\s+match)?|完全匹配|部分匹配|已验证(?:匹配)?)\b",
+        re.IGNORECASE,
+    )
+    stop_slugs = {
+        "and/or", "either/or", "true/false", "yes/no", "input/output",
+        "client/server", "frontend/backend", "read/write", "get/post",
+    }
+
+    lines = text.splitlines()
+    in_recommendation_section = False
+
+    for i, line in enumerate(lines):
+        line_clean = line.strip()
+        if re.search(r"^#{1,4}\s*(?:\d+[\.\)]\s*)?(?:final\s+)?recommendation\b", line_clean, re.IGNORECASE):
+            in_recommendation_section = True
+        elif re.search(r"^#{1,4}\s*(?:\d+[\.\)]\s*)?(?:verified\s+facts|comparison|evidence\s+gaps|budget)\b", line_clean, re.IGNORECASE):
+            in_recommendation_section = False
+
+        if "|" in line:
+            if re.search(r"\|\s*(?:verified|partial)(?:\s+match)?\s*\|", line, re.IGNORECASE) or verdict_pattern.search(line):
+                slugs = extract_repo_slugs_from_text(line)
+                for slug in slugs:
+                    if slug not in stop_slugs and slug not in investigated and slug not in seen:
+                        seen.add(slug)
+                        ungrounded.append(slug)
+            continue
+
+        slugs_in_line = extract_repo_slugs_from_text(line)
+        if slugs_in_line:
+            block_lines = lines[i : min(i + 7, len(lines))]
+            block_text = "\n".join(block_lines)
+            if verdict_pattern.search(block_text):
+                for slug in slugs_in_line:
+                    if slug not in stop_slugs and slug not in investigated and slug not in seen:
+                        seen.add(slug)
+                        ungrounded.append(slug)
+            elif in_recommendation_section and re.search(r"\b(?:recommend|prefer|adopt|选择|推荐)\b", block_text, re.IGNORECASE):
+                for slug in slugs_in_line:
+                    if slug not in stop_slugs and slug not in investigated and slug not in seen:
+                        seen.add(slug)
+                        ungrounded.append(slug)
+
+    return ungrounded

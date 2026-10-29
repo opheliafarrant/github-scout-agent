@@ -7,7 +7,12 @@ import re
 from collections.abc import Iterable
 from typing import Any
 
-from .agent_loop import AgentLoop, AgentLoopConfig, AgentRunResult
+from .agent_loop import (
+    AgentLoop,
+    AgentLoopConfig,
+    AgentRunResult,
+    find_ungrounded_candidate_claims,
+)
 from .budget import RequestBudget
 from .events import EventRecorder
 from .github_api import GitHubRestClient, normalize_language_name
@@ -162,11 +167,17 @@ def _candidate_records(tool_results: Iterable[Any]) -> list[Any]:
 
 
 def _report_is_complete(result: AgentRunResult) -> bool:
-    """Report 'complete' only when evidence gathering passes its own check
-    AND at least one candidate has been accepted through investigation."""
+    """Report 'complete' only when evidence gathering passes its own check,
+    at least one candidate has been accepted through investigation,
+    and no unverified candidate claims were detected."""
+    has_ungrounded = any(
+        gap.startswith("unverified candidate claimed as match or recommendation:")
+        for gap in result.evidence_gaps
+    )
     return (
         result.status == "completed"
         and result.evidence_complete is True
+        and not has_ungrounded
         and int(result.budget.get("accepted_candidate_count", 0)) > 0
     )
 
@@ -174,14 +185,36 @@ def _report_is_complete(result: AgentRunResult) -> bool:
 def render_mvp_report(task: str, result: AgentRunResult) -> str:
     """Render an evidence-first report without inventing scores or facts."""
 
+    ungrounded_candidates = [
+        gap.split(":", 1)[1].strip()
+        for gap in result.evidence_gaps
+        if gap.startswith("unverified candidate claimed as match or recommendation:")
+    ]
+    if not ungrounded_candidates and result.final_text:
+        investigated = {
+            c.full_name.casefold() for c in _candidate_records(result.tool_results)
+        } | {
+            cid.casefold()
+            for cid in result.budget.get("accepted_candidate_ids", []) or []
+            if cid and not cid.startswith("__anonymous_")
+        }
+        ungrounded_candidates = find_ungrounded_candidate_claims(result.final_text, investigated)
+
+    is_complete = _report_is_complete(result) and not ungrounded_candidates
+
     lines = [
         "# GitHub Scout Agent MVP Report",
         "",
         f"- Task: {task}",
         f"- Status: {result.status}",
         f"- Termination: {result.termination_reason}",
-        f"- Completeness: {'complete' if _report_is_complete(result) else 'partial'}",
+        f"- Completeness: {'complete' if is_complete else 'partial'}",
     ]
+    if ungrounded_candidates:
+        lines.append(
+            f"- Evidence Grounding Alert: Unverified repository claims detected ({', '.join(ungrounded_candidates)}). "
+            "These projects were not inspected with session tools and are based on unverified model assumptions."
+        )
     stopped_by = [
         str(dimension)
         for dimension in result.budget.get("fatal_exhausted_dimensions", []) or []

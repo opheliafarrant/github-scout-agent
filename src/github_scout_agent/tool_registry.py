@@ -251,7 +251,13 @@ def build_github_tool_registry(client: GitHubRestClient) -> ToolRegistry:
     registry = ToolRegistry()
     registry.register(ToolDefinition(
         name="search_public_repositories",
-        description="Search public GitHub repositories by keyword. Returns name, description, stars, language, topics, and URL for each match. Use first to discover candidate repositories. If results are few or irrelevant, try shorter or alternative queries.",
+        description=(
+            "Search public GitHub repositories by keyword. Returns name, description, stars, language, "
+            "topics, and URL for each match. Use first to discover candidate repositories. "
+            "For production framework/library evaluation, use sort='stars' or include qualifiers like 'stars:>50' "
+            "to prioritize mature and maintained projects over low-quality or 0-star toy repos. "
+            "If results are few or irrelevant, try shorter or alternative queries."
+        ),
         arguments_model=SearchArguments,
         handler=_BoundHandler(client, client.search_public_repositories, ("query", "sort", "order", "page", "per_page")),
     ))

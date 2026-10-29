@@ -1583,3 +1583,80 @@ def test_cumulative_feedback_budget_stops_the_run_and_records_the_trace() -> Non
     assert first["bytes"] > 0
     assert first["index"] == 1
     assert "feedback_records" not in budget.snapshot()
+
+
+def test_policy_includes_search_maturity_and_prior_knowledge_grounding_rules() -> None:
+    model = ScriptedMockLLM([AssistantResponse(content="done")])
+    budget = RequestBudget(max_model_calls=2)
+    with _client(_search_or_readme_handler, budget) as client:
+        result = AgentLoop(
+            model=model,
+            tools=build_github_tool_registry(client),
+            budget=budget,
+        ).run("find RAG frameworks")
+
+    policy_message = result.messages[1].content
+    assert "Search maturity & quality" in policy_message
+    assert "sort='stars'" in policy_message
+    assert "stars:>50" in policy_message
+    assert "Prior knowledge verification" in policy_message
+    assert "NEVER recommend or declare any repository as a 'Verified Match' without actually investigating it" in policy_message
+
+
+def test_finalization_prompt_includes_investigated_whitelist_and_grounding_rules() -> None:
+    responses = [
+        AssistantResponse(
+            tool_calls=[
+                ToolCall(
+                    id="readme-1",
+                    name="get_public_readme",
+                    arguments=json.dumps({"owner": "octo", "repo": "demo-agent"}),
+                )
+            ]
+        ),
+        AssistantResponse(content="Final report content"),
+    ]
+    model = ScriptedMockLLM(responses)
+    budget = RequestBudget(max_candidates=3, max_github_requests=5, max_model_calls=3)
+    with _client(_search_or_readme_handler, budget) as client:
+        result = AgentLoop(
+            model=model,
+            tools=build_github_tool_registry(client),
+            budget=budget,
+            config=AgentLoopConfig(finalization_reserve_calls=1),
+        ).run("find agent frameworks")
+
+    final_instruction = [m for m in result.messages if m.role == "user"][-1].content
+    assert "INVESTIGATED CANDIDATES WHITELIST: [octo/demo-agent]" in final_instruction
+    assert "STRICT GROUNDING RULES:" in final_instruction
+    assert "You may ONLY declare a repository as 'Verified Match'" in final_instruction
+    assert "Any repository NOT in this whitelist was NEVER inspected" in final_instruction
+
+
+def test_empty_investigated_whitelist_when_no_candidates_inspected() -> None:
+    responses = [
+        AssistantResponse(
+            tool_calls=[
+                ToolCall(
+                    id="search-1",
+                    name="search_public_repositories",
+                    arguments=json.dumps({"query": "empty query"}),
+                )
+            ]
+        ),
+        AssistantResponse(content="No results report"),
+    ]
+    model = ScriptedMockLLM(responses)
+    budget = RequestBudget(max_candidates=3, max_github_requests=5, max_model_calls=3)
+    with _client(_search_or_readme_handler, budget) as client:
+        result = AgentLoop(
+            model=model,
+            tools=build_github_tool_registry(client),
+            budget=budget,
+            config=AgentLoopConfig(finalization_reserve_calls=1),
+        ).run("find nothing")
+
+    final_instruction = [m for m in result.messages if m.role == "user"][-1].content
+    assert "INVESTIGATED CANDIDATES WHITELIST: None" in final_instruction
+    assert "No repositories were successfully investigated" in final_instruction
+

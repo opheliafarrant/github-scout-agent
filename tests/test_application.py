@@ -591,3 +591,91 @@ def test_acceptance_scenario_deep_evidence_research_and_exclusion() -> None:
     assert "get_public_readme" in report
     assert budget.github_requests_used == 5
 
+
+def test_ungrounded_candidate_claims_trigger_evidence_alert_and_partial_completeness() -> None:
+    explanation_with_hallucination = (
+        "## 1. Verified Facts & Candidate Verification\n\n"
+        "- [octo/demo](https://github.com/octo/demo):\n"
+        "  - Status: Verified Match (Python, 10 Stars)\n"
+        "  - Verified Capabilities: Demo agent capability.\n\n"
+        "- [langchain-ai/langchain](https://github.com/langchain-ai/langchain):\n"
+        "  - Status: Verified Match (Python, 90000 Stars)\n"
+        "  - Verified Capabilities: Famous RAG framework.\n\n"
+        "## 4. Final Recommendation\n\n"
+        "Recommend langchain-ai/langchain as the primary choice."
+    )
+
+    result = AgentRunResult(
+        status="completed",
+        termination_reason="model_finalized",
+        final_text=explanation_with_hallucination,
+        tool_results=[],
+        budget={"accepted_candidate_count": 1, "accepted_candidate_ids": ["octo/demo"]},
+        evidence_complete=True,
+    )
+    report = render_mvp_report("find RAG frameworks", result)
+    assert "- Completeness: partial" in report
+    assert "- Evidence Grounding Alert: Unverified repository claims detected (langchain-ai/langchain)" in report
+
+
+def test_grounded_candidates_pass_without_alert() -> None:
+    explanation_clean = (
+        "## 1. Verified Facts & Candidate Verification\n\n"
+        "- [octo/demo](https://github.com/octo/demo):\n"
+        "  - Status: Verified Match (Python, 10 Stars)\n"
+        "  - Verified Capabilities: Demo agent capability.\n\n"
+        "## 4. Final Recommendation\n\n"
+        "Recommend octo/demo."
+    )
+
+    result = AgentRunResult(
+        status="completed",
+        termination_reason="model_finalized",
+        final_text=explanation_clean,
+        tool_results=[],
+        budget={"accepted_candidate_count": 1, "accepted_candidate_ids": ["octo/demo"]},
+        evidence_complete=True,
+    )
+    report = render_mvp_report("find frameworks", result)
+    assert "- Completeness: complete" in report
+    assert "Evidence Grounding Alert" not in report
+
+
+def test_uninvestigated_mention_in_evidence_gaps_does_not_trigger_false_positive_alert() -> None:
+    explanation_with_gap_mention = (
+        "## 1. Verified Facts & Candidate Verification\n\n"
+        "- [octo/demo](https://github.com/octo/demo):\n"
+        "  - Status: Verified Match (Python, 10 Stars)\n"
+        "  - Verified Capabilities: Demo agent capability.\n\n"
+        "## 3. Evidence Gaps & Unknowns\n\n"
+        "- Note: Well-known frameworks such as langchain-ai/langchain and run-llama/llama_index were not investigated in this session.\n\n"
+        "## 4. Final Recommendation\n\n"
+        "Recommend octo/demo based on verified evidence."
+    )
+
+    result = AgentRunResult(
+        status="completed",
+        termination_reason="model_finalized",
+        final_text=explanation_with_gap_mention,
+        tool_results=[],
+        budget={"accepted_candidate_count": 1, "accepted_candidate_ids": ["octo/demo"]},
+        evidence_complete=True,
+    )
+    report = render_mvp_report("find frameworks", result)
+    assert "- Completeness: complete" in report
+    assert "Evidence Grounding Alert" not in report
+
+
+def test_search_tool_description_guides_maturity_sorting() -> None:
+    from github_scout_agent.tool_registry import build_github_tool_registry
+    from github_scout_agent.github_api import GitHubRestClient
+    budget = RequestBudget()
+    with GitHubRestClient(budget=budget) as github:
+        registry = build_github_tool_registry(github)
+        schemas = registry.schemas()
+        search_schema = next(s for s in schemas if s["function"]["name"] == "search_public_repositories")
+        desc = search_schema["function"]["description"]
+        assert "sort='stars'" in desc
+        assert "stars:>50" in desc
+
+
