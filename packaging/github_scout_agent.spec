@@ -83,6 +83,7 @@ exe = EXE(
     console=False,
     disable_windowed_traceback=False,
     version=str(ROOT / "packaging" / "version_info.txt"),
+    icon=str(ROOT / "packaging" / "github_scout_agent.ico"),
 )
 
 collect = COLLECT(

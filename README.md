@@ -6,9 +6,9 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-v1.1.0-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-v1.2.0-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg" alt="Python Version">
-  <img src="https://img.shields.io/badge/tests-255%20passed-success.svg" alt="Test Status">
+  <img src="https://img.shields.io/badge/tests-360%20passed-success.svg" alt="Test Status">
   <img src="https://img.shields.io/badge/architecture-Read--Only%20GET%20%7C%20Zero--Execution-brightgreen.svg" alt="Architecture">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-brightgreen.svg" alt="License"></a>
 </p>
@@ -188,6 +188,17 @@ python -m PyInstaller packaging/github_scout_agent.spec --noconfirm
 
 产物为 `dist/GitHubScoutAgent/GitHubScoutAgent.exe`（无控制台窗口）。双击后：自动监听 `127.0.0.1:8080` → 自动打开默认浏览器 → 显示设置引导，对方只需粘贴 API Key 即可开始调研。若已有实例在运行，再次双击只会唤出浏览器而不会重复起服务。配置与历史落盘在 `%APPDATA%\GitHubScoutAgent\`，卸载程序不会带走个人配置。
 
+#### 📦 Windows 安装包（推荐分发给非开发用户）
+
+从 [Releases](https://github.com/opheliafarrant/github-scout-agent/releases) 下载 `GitHubScoutAgent-1.2.0-setup.exe`，双击按向导安装（每用户安装，不需要管理员权限）：
+
+- 默认安装到 `%LOCALAPPDATA%\Programs\GitHub Scout Agent`，自动创建开始菜单快捷方式，桌面图标可选；
+- 安装包、快捷方式与卸载项统一使用 `packaging/github_scout_agent.ico` 应用图标；
+- 卸载（设置 → 应用 → GitHub Scout Agent）只移除程序本体，`%APPDATA%\GitHubScoutAgent\` 内的配置与历史保留；
+- 静默安装：`GitHubScoutAgent-1.2.0-setup.exe /VERYSILENT /CURRENTUSER`。
+
+安装包由 `packaging/installer.iss` 经 Inno Setup 编译生成（`ISCC.exe packaging\installer.iss`，产物输出到 `dist/installer/`，均为构建产物、不入库）。
+
 ### 方式 B：CLI 命令行调研（适合无图形界面与脚本批处理）
 
 直接在终端执行端到端调研。为防止误触产生网络流量，线上真实运行要求显式附带 `--confirm-live`：
@@ -249,10 +260,11 @@ pytest -m "not live_github" --tb=short
 
 | 版本 | 发布日期 | 定位与核心变更 | Git Tag | 状态 |
 | :--- | :--- | :--- | :--- | :--- |
+| **V1.2.0** | 2026-10-29 | **证据治理与发布工程**：证据台账 + 单一报告校验器重构、覆盖度分级（completeness 依实际证据分级并给出 partial 理由）、成熟度与元数据裁决门控、容量不可满足显式降级、Windows 安装包（Inno Setup）与自定义图标、360 项全自动化回归测试。 | `v1.2.0` | **当前正式版** |
+| **V1.1.0** | 2026-10-27 | **Web UI 与生产级稳健性**：FastAPI + SSE 本地研究仪表盘、一键 Markdown 导出、搜索响应裁剪 90%+、模型网络指数退避重试、README 门控强化、184 项全自动化回归测试。 | `v1.1.0` (Commit `71802a9`) | 历史冻结 |
 | **V1.0.0** | 2026-10-27 | **CLI MVP 核心引擎**：五大只读 GitHub 工具、受控 Agent 反馈循环、确定性 5 维预算、OpenAI 兼容 Tool Calling、Gate A/B 协议预检。 | `v1.0.0` (Commit `df3b4ce`) | 历史冻结 |
-| **V1.1.0** | 2026-10-27 | **Web UI 与生产级稳健性**：FastAPI + SSE 本地研究仪表盘、一键 Markdown 导出、搜索响应裁剪 90%+、模型网络指数退避重试、README 门控强化、184 项全自动化回归测试。 | `v1.1.0` (Commit `71802a9`) | **当前正式版** |
 
-> 📌 **版本追溯提示**：正式版本标签 `v1.1.0` 永久锚定于 Commit `71802a9`。主分支 `master` 作为持续演进分支，包含后续工程配置调优、文档完善与发布维护提交。
+> 📌 **版本追溯提示**：正式版本标签 `v1.2.0` 永久锚定于发布提交（即 `v1.2.0` tag 指向的 commit，安装包 `GitHubScoutAgent-1.2.0-setup.exe` 与该 tag 一一对应）；上一正式版 `v1.1.0` 锚定于 Commit `71802a9`。主分支 `master` 作为持续演进分支，包含后续工程配置调优、文档完善与发布维护提交。
 
 ---
 
