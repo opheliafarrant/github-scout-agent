@@ -3,7 +3,7 @@
 ## 1. Task Foundation
 - True Goal: 建立只读、有证据支持的 GitHub Scout Agent，并通过受限 Agent Loop 完成公开仓库候选发现、证据补充、透明对比与可核验推荐报告。
 - Current Stage: S4 验收与归档
-- Active Mainline: T54 Web UI 图形化模型配置与密钥加密落盘（205 项全量回归通过）。
+- Active Mainline: T55 桌面分发打包（PyInstaller --onedir + Inno Setup），前置 T54 图形化配置已交付。
 
 ## 2. Frozen Baselines and Inline Evidence
 - F1 Fact Baseline (客观状态与实测结论):
@@ -29,7 +29,7 @@
   - F1-21: Web UI 图形化模型配置固化 [E3: 205 passed, 1 deselected, 1 warning in 5.53s；真实 HTTP 冒烟：GET /api/settings 掩码 sk-…3456、PUT 后 /api/config 转 ready、外部 http 端点 422、磁盘文件无明文]：新增设置弹窗（5 预设 + 高级选项 + 内联校验）与 GET/PUT /api/settings；配置二级来源 %APPDATA%\GitHubScoutAgent\config.json（GITHUB_SCOUT_SETTINGS_FILE 可覆盖），环境变量优先级不变；密钥经 Windows DPAPI 加密为 dpapi: 前缀落盘，接口仅回显掩码；历史文件路径改由 default_history_path() 统一至 %APPDATA%。
   - F1-20: Web UI 历史记录本地持久化与并发安全固化 [E3: 188 passed, 1 deselected in 5.34s]：引入 HistoryStore 抽象，支持本地 JSONL 原子持久化（.scout/web_history.jsonl），threading.Lock 互斥保护多工作线程读写，uuid4 随机熵防止 task_id 碰撞，FIFO 淘汰上限 100 条杜绝内存泄漏；覆盖重启重载、容量限制、并发多线程与损坏行自愈单测。
 - F2 Decision Baseline (已批准架构与决策边界):
-  - F2-01 (D1): CLI 与本地 Web UI (FastAPI+SSE) 双入口；不采用重型框架与桌面端安装包。
+  - F2-01 (D1): CLI 与本地 Web UI (FastAPI+SSE) 双入口；采用 PyInstaller + Inno Setup 的轻量桌面分发（用户 2026-10-29 授权修订，原条款「不采用桌面端安装包」废止；仍不采用 Electron/Tauri 等重型桌面框架）。
   - F2-02 (D2): 严格只读与公开边界；支持无 Token (60次/h) 与用户只读 Token (5000次/h)；Token 不进模型/日志/报告/Git。
   - F2-03 (D3): 确定性程序预算强约束（模型轮次、GitHub 请求数、任务时长、响应字节、候选数量）；CLI/Web 参数动态调优。
   - F2-04 (D4): 聚焦少量技术候选比对、证据收集与透明推荐报告；不执行第三方代码，不承担完整供应链审计。
@@ -40,7 +40,7 @@
   - F3-Release-1.1 (Current Release Anchor): `71802a9` (Git Tag `v1.1.0` 正式版基线，含功能冻结 `c32d17f`)。
   - F3-Master-Dev: `master` 分支头，承载后发布阶段维保提交与文档迭代；后续 Agent 严禁将 master 提交与已发布的冻结 Tag 混淆。
 ## 3. Current Engineering Flow and Impediments
-- Current Impediment / Stop Point: 无阻碍。T54 图形化配置已完成并全量回归 205 通过；打包（Phase B/C）尚未开始，若确认要做需先修订 F2-01（当前条款明确『不采用桌面端安装包』）。
+- Current Impediment / Stop Point: 无阻碍。T54 图形化配置已完成（205 通过）；F2-01 已修订放行桌面分发，T55 打包（Phase B: PyInstaller --onedir）待执行。
 - [x] T54: Web UI 图形化模型配置：新增设置弹窗（预设端点/高级选项/内联校验）、GET+PUT /api/settings、%APPDATA% 二级配置来源、DPAPI 密钥加密与掩码回显、历史路径统一；新增 tests/conftest.py 与 17 个单测 [E3: 205 passed]。
 - [x] T53: Web UI 历史记录本地持久化与并发安全治理：实现 HistoryStore、互斥锁、UUID task_id 与 JSONL 存储，新增 4 个单测，回归通过 [E3: 188 passed]。
 - [x] T52: KNOWN_PROJECTS 兜底与文档漂移修复：新增 get_known_repository 工具、工具注册 5→7、README 架构图与 docstring 漂移修复 [E3: 184 passed]。
