@@ -109,6 +109,11 @@ dialog::backdrop{background:rgba(1,4,9,.72)}
 .model-row button:hover:not(:disabled){border-color:var(--accent)}
 .model-row button:disabled{opacity:.6;cursor:progress}
 .model-select{width:100%;margin-top:8px}
+.probe-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px}
+.probe-toggle{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);cursor:pointer}
+.probe-toggle input{width:auto;margin:0}
+#stop-probe{background:var(--code-bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 10px;font:11px var(--font);cursor:pointer}
+#stop-probe:hover{border-color:var(--accent)}
 .field.inline{flex-direction:row;align-items:center;gap:8px}
 details.advanced{border-top:1px solid var(--border);padding-top:12px;margin:4px 0 14px}
 details.advanced summary{cursor:pointer;font-size:13px;color:var(--muted);margin-bottom:12px}
@@ -184,7 +189,11 @@ Example: Find three open-source Python AI agents that can search GitHub reposito
         <button type="button" id="fetch-models" onclick="fetchModels()">获取模型列表</button>
       </div>
       <select id="model-select" class="model-select" aria-label="该服务列出的模型" onchange="pickModel(this)" hidden></select>
-      <span class="help" id="model-help">填好地址与 Key 后点「获取模型列表」，下拉框会列出该服务的全部模型；列表按 API 地址缓存在本机，刷新后仍可用；也可直接手动填写。</span>
+      <div class="probe-row">
+        <label class="probe-toggle"><input type="checkbox" id="only-capable" checked onchange="renderModelSelect()"> 只显示通过 Tool Calling 检测的模型</label>
+        <button type="button" id="stop-probe" onclick="stopProbe()" hidden>停止检测</button>
+      </div>
+      <span class="help" id="model-help">点「获取模型列表」后，面板会列出该服务的全部模型，并逐个探测是否支持 Tool Calling（每个模型 1 次极短请求）；不支持的在默认视图里被隐藏。</span>
     </div>
 
     <div class="field">
@@ -288,33 +297,199 @@ function writeModelCache(baseUrl, models){
   try{ window.localStorage.setItem(modelCacheKey(baseUrl), JSON.stringify(models)); }catch(e){}
 }
 
-function renderModelSelect(models){
+// —— Tool Calling 能力筛选 ——
+// /models 只返回模型 id，没有能力元数据，所以只能逐个探测；结论按地址缓存在本机 24 小时，
+// 避免每次打开设置都重复消耗 token。
+const TOOLCALL_CACHE_PREFIX = 'gsa.toolcall.v1:';
+const PROBE_BATCH = 40;
+const VERDICT_TTL_MS = 24 * 60 * 60 * 1000;
+let allModels = [];
+let toolVerdicts = {};
+let probeRunning = false;
+let probeCancelled = false;
+
+function normBaseUrl(baseUrl){
+  return String(baseUrl || '').trim().replace(/\/+$/, '').toLowerCase();
+}
+
+function verdictCacheKey(baseUrl){
+  return TOOLCALL_CACHE_PREFIX + normBaseUrl(baseUrl);
+}
+
+function readVerdictCache(baseUrl){
+  if(!baseUrl) return {};
+  try{
+    const raw = window.localStorage.getItem(verdictCacheKey(baseUrl));
+    if(!raw) return {};
+    const parsed = JSON.parse(raw);
+    return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+  }catch(e){ return {}; }
+}
+
+function writeVerdictCache(baseUrl, verdicts){
+  if(!baseUrl) return;
+  try{ window.localStorage.setItem(verdictCacheKey(baseUrl), JSON.stringify(verdicts)); }catch(e){}
+}
+
+function verdictOf(model){
+  const v = toolVerdicts[model];
+  return (v && typeof v === 'object') ? v : null;
+}
+
+function isFreshVerdict(v){
+  return !!v && typeof v.at === 'number' && (Date.now() - v.at) < VERDICT_TTL_MS;
+}
+
+function supportedCount(models){
+  return models.filter(function(id){ const v = verdictOf(id); return !!v && v.supported === true; }).length;
+}
+
+function unknownCount(models){
+  return models.filter(function(id){
+    const v = verdictOf(id);
+    return !isFreshVerdict(v) || v.supported === null || v.supported === undefined;
+  }).length;
+}
+
+function currentModels(){
+  return allModels.length ? allModels : readModelCache(getVal('set-base-url'));
+}
+
+function renderModelSelect(){
   const select = document.getElementById('model-select');
+  const models = currentModels();
+  const previous = getVal('set-model');
   select.innerHTML = '';
-  if(!models.length){ select.hidden = true; return; }
+  if(!models.length){
+    select.hidden = true;
+    select.value = '';
+    return;
+  }
+  const onlyCapable = !!document.getElementById('only-capable').checked;
+  let visible = models;
+  let fellBack = false;
+  if(onlyCapable){
+    const confirmed = models.filter(function(id){ const v = verdictOf(id); return isFreshVerdict(v) && v.supported === true; });
+    if(confirmed.length){ visible = confirmed; }
+    else { visible = models; fellBack = true; }
+  }
   const head = document.createElement('option');
   head.value = '';
-  head.textContent = '— 从 ' + models.length + ' 个模型中选择 —';
+  let headText;
+  if(onlyCapable && !fellBack){
+    headText = '— 已确认支持 Tool Calling 的 ' + visible.length + ' 个模型 / 共 ' + models.length + ' 个 —';
+  }else if(onlyCapable){
+    headText = '— 暂无已确认支持的模型，先显示全部 ' + models.length + ' 个（检测中或全部不兼容）—';
+  }else{
+    headText = '— 全部 ' + models.length + ' 个模型（✓ 支持 / ✗ 不支持 / ? 未检测）—';
+  }
+  head.textContent = headText;
   select.appendChild(head);
-  for(const id of models){
+  for(const id of visible){
+    const v = verdictOf(id);
     const option = document.createElement('option');
     option.value = id;
-    option.textContent = id;
+    let mark = ' ?';
+    if(isFreshVerdict(v)){
+      if(v.supported === true) mark = ' ✓';
+      else if(v.supported === false) mark = ' ✗';
+    }
+    option.textContent = id + mark;
     select.appendChild(option);
   }
-  select.value = '';
+  select.value = visible.indexOf(previous) !== -1 ? previous : '';
   select.hidden = false;
 }
 
 function syncModelSelect(){
-  renderModelSelect(readModelCache(getVal('set-base-url')));
+  const baseUrl = getVal('set-base-url');
+  allModels = readModelCache(baseUrl);
+  toolVerdicts = readVerdictCache(baseUrl);
+  renderModelSelect();
 }
 
 function pickModel(select){
   if(!select.value) return;
   setVal('set-model', select.value);
   select.value = '';
+  const v = verdictOf(getVal('set-model'));
+  if(isFreshVerdict(v) && v.supported === false){
+    setSettingsStatus('已选择「' + getVal('set-model') + '」，但该模型未通过 Tool Calling 检测，运行任务可能失败。', 'error');
+    return;
+  }
   setSettingsStatus('已选择「' + getVal('set-model') + '」，点“保存配置”生效。', 'ok');
+}
+
+function probeSummaryText(models){
+  const supported = supportedCount(models);
+  const unknown = unknownCount(models);
+  const checked = models.length - unknown;
+  return '已检测 ' + checked + ' 个模型：' + supported + ' 个支持 Tool Calling'
+    + (unknown ? '，' + unknown + ' 个未能判定' : '')
+    + '。下拉框默认只显示支持 Tool Calling 的模型。';
+}
+
+function stopProbe(){
+  if(!probeRunning) return;
+  probeCancelled = true;
+  setSettingsStatus('正在停止检测…', '');
+}
+
+async function probeCapabilities(models){
+  if(probeRunning || !models.length) return;
+  const baseUrl = getVal('set-base-url');
+  const pending = models.filter(function(id){ return !isFreshVerdict(verdictOf(id)); });
+  if(!pending.length){
+    renderModelSelect();
+    setSettingsStatus(probeSummaryText(models), 'ok');
+    return;
+  }
+  probeRunning = true;
+  probeCancelled = false;
+  const stop = document.getElementById('stop-probe');
+  stop.hidden = false;
+  let done = 0;
+  let failure = '';
+  let aborted = false;
+  let cancelled = false;
+  try{
+    for(let i = 0; i < pending.length; i += PROBE_BATCH){
+      if(probeCancelled){ cancelled = true; break; }
+      const batch = pending.slice(i, i + PROBE_BATCH);
+      const body = { model_base_url: baseUrl, models: batch };
+      const apiKey = getVal('set-api-key');
+      if(apiKey) body.model_api_key = apiKey;
+      const r = await fetch('/api/settings/models/probe', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify(body),
+      });
+      const data = await r.json().catch(function(){ return {}; });
+      if(!r.ok || data.ok === false){
+        failure = (data && (data.detail || data.message)) || ('HTTP ' + r.status);
+        break;
+      }
+      for(const item of (data.results || [])){
+        if(!item || !item.model) continue;
+        toolVerdicts[item.model] = { supported: item.supported, reason: item.reason, at: Date.now() };
+      }
+      writeVerdictCache(baseUrl, toolVerdicts);
+      done += batch.length;
+      renderModelSelect();
+      setSettingsStatus('Tool Calling 检测中：' + done + ' / ' + pending.length + '（已确认支持 ' + supportedCount(models) + ' 个）', '');
+      if(data.aborted){ aborted = true; break; }
+    }
+  }catch(e){
+    failure = e && e.message ? e.message : String(e);
+  }
+  probeRunning = false;
+  probeCancelled = false;
+  stop.hidden = true;
+  renderModelSelect();
+  if(failure){ setSettingsStatus('能力检测失败：' + failure, 'error'); return; }
+  if(aborted){ setSettingsStatus('检测已中断：该 API Key 被服务端拒绝（401），请先确认 Key 有效，再点「获取模型列表」重试。', 'error'); return; }
+  if(cancelled){ setSettingsStatus('已停止检测（本次检测 ' + done + ' 个模型）。', ''); return; }
+  setSettingsStatus(probeSummaryText(models), 'ok');
 }
 
 function detectPreset(base){
@@ -416,7 +591,9 @@ async function fetchModels(){
     }
     const models = data.models;
     writeModelCache(baseUrl, models);
-    renderModelSelect(models);
+    allModels = models;
+    toolVerdicts = readVerdictCache(baseUrl);
+    renderModelSelect();
     const input = document.getElementById('set-model');
     input.placeholder = '可手动填写或从下方下拉框选择';
     const current = getVal('set-model');
@@ -426,11 +603,13 @@ async function fetchModels(){
       note = ' 当前填写的「' + current + '」不在该服务返回的列表中，请确认模型名是否写错。';
     }
     document.getElementById('model-help').textContent =
-      '已从该服务获取 ' + models.length + ' 个模型：从下方下拉框可直接选择（全部可见，不受输入框文字过滤）；该列表按 API 地址缓存在本机，刷新页面后仍可用。';
+      '已从该服务获取 ' + models.length + ' 个模型。面板正在逐个探测 Tool Calling 能力（每个模型 1 次极短请求），'
+      + '支持的在下方下拉框默认可见，不支持的会被隐藏；取消勾选可看全部。';
     setSettingsStatus(
       '已获取 ' + models.length + ' 个可用模型' + (data.used_saved_key ? '（使用已保存的 Key 验证）' : '') + '。' + note,
       note ? 'error' : 'ok'
     );
+    probeCapabilities(models);
   }catch(e){
     setSettingsStatus('获取失败：' + e.message, 'error');
   }finally{

@@ -11,7 +11,7 @@
   - F1-02: 运行环境确认：Python 3.13.5、pip 25.1.1、Git 2.53.0；核心依赖 httpx 0.28.1、pydantic 2.14.1、typer 0.27.3、fastapi 0.115+、uvicorn 0.30+、pytest 8.4.2。
   - F1-03: 七大 GitHub 只读工具固定：`search_public_repositories`、`get_public_repository`、`get_known_repository`、`get_public_readme`、`replace_candidate_with_readme`、`get_repository_license`、`get_repository_languages_and_topics`，限制官方 `api.github.com`、公开仓库、GET-only 与 64 KiB 流式截断保护。
   - F1-04: 多模型端点兼容性已实测 [E3]: DeepSeek (`deepseek-flash`) 与 Qwen-Max (`qwen-max`) 真实链路在线验收全部通过。
-  - F1-05: 离线测试与自动化套件：完整自动化回归 `235 passed, 0 failed, 0 skipped`（junitxml 计数，pytest exit=0） [E3: pytest]，compileall 零错误，语法与协议全面自洽。
+  - F1-05: 离线测试与自动化套件：完整自动化回归 `244 passed, 0 failed, 0 skipped`（junitxml 计数，pytest exit=0，8.30s） [E3: pytest]，compileall 零错误，语法与协议全面自洽。
   - F1-06: 缺陷与时序修复已固化：B1 闭包晚绑定、B2 Callable 类型、B3 None 守卫、B4 Gate A dict 纯函数构建、M1 thinking_mode 字面量校验、P0 提示词时序引导、P0 预算放宽可配。
   - F1-07: 候选发现与采纳机制完全解耦（Commit 822c616）：搜索结果不再自动锁定候选容量；仅在显式调查时消耗配额；证据门控拦截过早停步。
   - F1-08: Q1~Q3 深度修复与意图穿透固化：空结果促发更宽泛查询；消除空候选提前收尾；README 关键词强制 require_candidate_readme 门控。
@@ -36,6 +36,7 @@
   - 追加（同一轮用户反馈）：
     (1) 下拉"只剩几个模型"根因是浏览器 datalist **按输入框已有文字过滤**（框内已有 deepseek-v4.1-flash-1017 时只剩 2 条），非后端过滤——后端一次返回 183 个（max_models 500）。二次修复（用户刷新后又只剩两个）：彻底弃用 datalist，改独立 `<select id="model-select">` 全量渲染（183 项全部可见、不受输入框文字过滤），选中即回填输入框；列表按 Base URL 归一化键（小写+去尾斜杠）存入 `localStorage`（前缀 `gsa.models.v1:`，不含 Key），刷新/重开设置后仍可用，换地址自动切换到该地址自己的缓存；旧值不在清单时只红字提醒、不再擅自清空。新增 1 个模板回归测试（断言无 datalist、有 model-select 与缓存键）。
     (2) "保存不验证连通性"修复：`PUT /api/settings` 落盘后调用 `_verify_saved_endpoint`（复刻 /models 探针，8s 超时），响应新增 `verification`：ok{count,model_listed} / failed{reason,message,status_code} / unknown（端点无 /models）/ skipped；设置**先保存再验证**，探测失败绝不回滚用户输入；UI 依结果给红字（Key 被拒 / 地址不通 / 模型名不在清单）。新增 4 个路由测试（成功验证、Key 被拒仍保存、模型名未列出、无 /models 端点）+ 一个 autouse 离线 fixture，测试总数 230→234。
+  - F1-27: 模型下拉按 Tool Calling 能力筛选固化 [E3: 244 passed, 0 failed；重建 exe 后真实无头 Chrome/CDP 对能力桩端点 11/11 项通过]：/models 不返回任何能力元数据，故新增 model_client.probe_tool_calling（每模型 1 次 max_tokens=8 的 tools 探针，零 token 前置过滤 embedding/rerank/tts/whisper/dall-e/moderation/sdxl/flux/realtime 等，结果归 tools_accepted | tool_calls_returned | tools_rejected | no_access(403) | non_chat_model；auth(401)/not_found/rate_limited/timeout/network/upstream/invalid_response 记为未判定）与 POST /api/settings/models/probe（payload 上限 200 模型、Semaphore(6) 并发、任一 401 即 key_lost 并对剩余模型返回 skipped、响应含 ok/count/supported/rejected/unknown/aborted/results）；前端 select 默认只列 supported===true 的模型（✓/✗/? 标记，可取消勾选看全部），判定按 Base URL 归一化键存 localStorage（前缀 `gsa.toolcall.v1:`，24h TTL），刷新后零请求复用；探测可「停止检测」中断，状态栏逐步显示 "检测中 done/total（已确认支持 N 个）"。真实中转实测 4 个模型：deepseek-v4.1-flash-1017 → supported=True（tools_accepted）、cmaas-glm-5.3 → 403 no_access、qwen-audio-3.1-realtime-flash → invalid_response、text-embedding-v3 → non_chat_model 且零请求。CDP 验证：6 个桩模型（2 支持 / 1 拒绝 tools / 1 403 / 1 embedding / 1 realtime）→ 默认只显示 2 个、取消勾选显示 6 个并带标记、刷新重开设置后仍过滤且不再发请求。新增 9 个回归测试（5 客户端探针 + 4 路由/模板）。诚实边界：探测 183 个模型意味着 183 次极短请求（约 1-2 分钟、少量 token），会被端点限流并可能留下"未判定"，故提供停止按钮与全量视图。
 - F2 Decision Baseline (已批准架构与决策边界):
   - F2-01 (D1): CLI 与本地 Web UI (FastAPI+SSE) 双入口；采用 PyInstaller + Inno Setup 的轻量桌面分发（用户 2026-10-29 授权修订，原条款「不采用桌面端安装包」废止；仍不采用 Electron/Tauri 等重型桌面框架）。
   - F2-02 (D2): 严格只读与公开边界；支持无 Token (60次/h) 与用户只读 Token (5000次/h)；Token 不进模型/日志/报告/Git。
@@ -48,7 +49,8 @@
   - F3-Release-1.1 (Current Release Anchor): `71802a9` (Git Tag `v1.1.0` 正式版基线，含功能冻结 `c32d17f`)。
   - F3-Master-Dev: `master` 分支头，承载后发布阶段维保提交与文档迭代；后续 Agent 严禁将 master 提交与已发布的冻结 Tag 混淆。
 ## 3. Current Engineering Flow and Impediments
-- Current Impediment / Stop Point: 无阻碍。T55 Phase B 已交付（双击即用、无控制台、单实例唤浏览器）；T58 P-03 修复已闭环（220 通过，E2E complete）；T59 设置面板模型下拉与鉴权诊断已交付（235 通过）；Phase C Inno Setup 安装包待执行；代码签名（Phase D）为可选项。
+- Current Impediment / Stop Point: 无阻碍。T55 Phase B 已交付（双击即用、无控制台、单实例唤浏览器）；T58 P-03 修复已闭环（220 通过，E2E complete）；T59 设置面板模型下拉与鉴权诊断已交付（235 通过）；T60 Tool Calling 能力筛选已交付（244 通过）；Phase C Inno Setup 安装包待执行；代码签名（Phase D）为可选项。
+- [x] T60: 模型下拉按 Tool Calling 能力筛选：新增 probe_tool_calling + POST /api/settings/models/probe（并发 6、401 中止、可中断）、前端默认只列已确认支持的模型并缓存判定 24h；新增 9 个回归测试 [E3: 244 passed；CDP 11/11、真实中转 4 模型语义正确]。
 - [x] T59: 设置面板模型列表下拉 + 鉴权失败可诊断：新增 POST /api/settings/models 与 list_model_ids、`<select>` 全量下拉（按地址 localStorage 缓存）+ reason 映射提示、上游错误原文透出（掩码）、保存即连通性验证；新增 11 个回归测试（6 路由 + 4 客户端 + 1 模板）[E3: 235 passed；exe 重建后 curl + CDP 真实浏览器 8/8 项实测（含刷新后仍 184 项）]。
 - [ ] T56: Inno Setup 安装包（Phase C）-> 目标产物: packaging/installer.iss + setup.exe；含开始菜单/桌面快捷方式、卸载项、安装时静默写入仅限 127.0.0.1 的入站防火墙规则（避免首次运行弹窗）。
 - [x] T58: P-03 修复（检索策略 + README 预算 + 证据闸门）：policy 增 query fidelity/coverage，禁止泛化替代；README 改 raw 流式字节上限下载；闸门接受 truncated、认 replace 票据、排除被替换与容量未接纳候选；新增 4 个回归测试（大 README 字节上限、raw 文本、预算耗尽、truncated 计为证据、替换/容量剔除）[E3: 220 passed；E2E Completeness: complete]。

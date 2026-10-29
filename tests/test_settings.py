@@ -64,6 +64,11 @@ def _offline_model_probe(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr("github_scout_agent.web_server.list_model_ids", unreachable)
 
+    def undecided(base_url: str, model: str, api_key: str | None = None, **_: object) -> dict[str, object]:
+        return {"model": model, "supported": None, "reason": "unknown", "detail": None, "status_code": None}
+
+    monkeypatch.setattr("github_scout_agent.web_server.probe_tool_calling", undecided)
+
 
 def test_missing_settings_file_reads_as_empty(tmp_path: Path) -> None:
     assert read_settings(tmp_path / "absent.json") == {}
@@ -561,4 +566,84 @@ def test_settings_page_lists_every_model_in_a_select_not_a_datalist() -> None:
     assert "<datalist" not in html
     assert "gsa.models.v1:" in html
     assert "syncModelSelect();" in html
+
+def test_probe_route_splits_models_into_supported_rejected_and_unknown(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    verdicts = {
+        "qwen-max": {"supported": True, "reason": "tools_accepted", "status_code": 200},
+        "llama3": {"supported": False, "reason": "tools_rejected", "status_code": 400},
+        "text-embedding-v3": {"supported": False, "reason": "non_chat_model", "status_code": None},
+        "mystery-model": {"supported": None, "reason": "not_found", "status_code": 404},
+    }
+
+    def fake_probe(base_url: str, model: str, api_key: str | None = None, **_: object) -> dict[str, object]:
+        return {"model": model, "detail": None, **verdicts[model]}
+
+    monkeypatch.setattr("github_scout_agent.web_server.probe_tool_calling", fake_probe)
+    response = client.post(
+        "/api/settings/models/probe",
+        json={
+            "model_base_url": "https://maas.example.test/compatible-mode/v1",
+            "model_api_key": "sk-probe",
+            "models": list(verdicts),
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["count"] == 4
+    assert body["supported"] == 1
+    assert body["rejected"] == 2
+    assert body["unknown"] == 1
+    assert body["aborted"] is False
+    assert body["used_saved_key"] is False
+    assert [item["model"] for item in body["results"]] == list(verdicts)
+    # the key never travels back to the caller
+    assert "sk-probe" not in response.text
+
+
+def test_probe_route_stops_the_batch_when_the_key_is_rejected(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def rejected(base_url: str, model: str, api_key: str | None = None, **_: object) -> dict[str, object]:
+        return {"model": model, "supported": None, "reason": "auth", "detail": "invalid key", "status_code": 401}
+
+    monkeypatch.setattr("github_scout_agent.web_server.probe_tool_calling", rejected)
+    names = [f"model-{index}" for index in range(8)]
+    response = client.post(
+        "/api/settings/models/probe",
+        json={"model_base_url": "https://api.deepseek.com/v1", "model_api_key": "sk-wrong", "models": names},
+    )
+    body = response.json()
+    assert body["aborted"] is True
+    assert body["supported"] == 0
+    assert body["count"] == 8
+    skipped = [item for item in body["results"] if item["reason"] == "skipped"]
+    assert skipped, "models queued after the rejected key must not be probed"
+
+
+def test_probe_route_rejects_a_malformed_endpoint(client: TestClient) -> None:
+    response = client.post(
+        "/api/settings/models/probe",
+        json={"model_base_url": "http://plain.example", "models": ["qwen-max"]},
+    )
+    assert response.status_code == 422
+
+
+def test_settings_page_filters_the_model_list_by_tool_calling_capability() -> None:
+    template = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "github_scout_agent"
+        / "templates"
+        / "index.html"
+    )
+    html = template.read_text(encoding="utf-8")
+    assert 'id="only-capable"' in html
+    assert "gsa.toolcall.v1:" in html
+    assert "/api/settings/models/probe" in html
+    assert "probeCapabilities(" in html
+    assert "stopProbe(" in html
+
 

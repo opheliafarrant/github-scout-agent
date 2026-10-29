@@ -12,7 +12,12 @@ from github_scout_agent.agent_models import AgentMessage, ToolCall
 from github_scout_agent.budget import RequestBudget
 from github_scout_agent.config import AppConfig
 from github_scout_agent.github_api import GitHubRestClient
-from github_scout_agent.model_client import ModelAdapterError, OpenAICompatibleClient, list_model_ids
+from github_scout_agent.model_client import (
+    ModelAdapterError,
+    OpenAICompatibleClient,
+    list_model_ids,
+    probe_tool_calling,
+)
 from github_scout_agent.tool_registry import build_github_tool_registry
 
 
@@ -537,3 +542,101 @@ def test_list_model_ids_reports_an_unsupported_route() -> None:
     with pytest.raises(ModelAdapterError) as caught:
         list_model_ids("https://api.deepseek.com/v1", None, transport=httpx.MockTransport(handler))
     assert caught.value.code == "model_list_unsupported"
+
+def test_probe_tool_calling_accepts_a_model_that_takes_tools() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"role": "assistant", "content": "ok"}}]},
+            request=request,
+        )
+
+    result = probe_tool_calling(
+        "https://api.deepseek.com/v1", "deepseek-chat", "sk-secret", transport=httpx.MockTransport(handler)
+    )
+    assert result["supported"] is True
+    assert result["reason"] == "tools_accepted"
+    body = json.loads(seen[0].content)
+    assert body["tools"][0]["type"] == "function"
+    assert body["tools"][0]["function"]["name"] == "scout_probe"
+    assert body["stream"] is False
+    assert str(seen[0].url) == "https://api.deepseek.com/v1/chat/completions"
+    assert seen[0].headers["authorization"] == "Bearer sk-secret"
+
+
+def test_probe_tool_calling_counts_returned_tool_calls_as_supported() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "type": "function",
+                                    "function": {"name": "scout_probe", "arguments": "{}"},
+                                }
+                            ],
+                        }
+                    }
+                ]
+            },
+            request=request,
+        )
+
+    result = probe_tool_calling(
+        "https://api.deepseek.com/v1", "deepseek-chat", None, transport=httpx.MockTransport(handler)
+    )
+    assert result["supported"] is True
+    assert result["reason"] == "tool_calls_returned"
+
+
+def test_probe_tool_calling_detects_a_rejected_tools_payload() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={"error": {"message": "registry.ollama.ai/library/llama3 does not support tools"}},
+            request=request,
+        )
+
+    result = probe_tool_calling("https://ollama.example/v1", "llama3", None, transport=httpx.MockTransport(handler))
+    assert result["supported"] is False
+    assert result["reason"] == "tools_rejected"
+
+
+def test_probe_tool_calling_treats_a_forbidden_model_as_unavailable() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            403,
+            json={"error": {"message": "Access to model denied. Please make sure you are eligible for it."}},
+            request=request,
+        )
+
+    result = probe_tool_calling(
+        "https://maas.example/compatible-mode/v1", "cmaas-glm-5.3", "sk-secret", transport=httpx.MockTransport(handler)
+    )
+    assert result["supported"] is False
+    assert result["reason"] == "no_access"
+
+
+def test_probe_tool_calling_skips_embeddings_without_a_request() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover - must not be reached
+        seen.append(request)
+        return httpx.Response(200, json={}, request=request)
+
+    result = probe_tool_calling(
+        "https://api.deepseek.com/v1", "text-embedding-v3", None, transport=httpx.MockTransport(handler)
+    )
+    assert result["supported"] is False
+    assert result["reason"] == "non_chat_model"
+    assert seen == []
+

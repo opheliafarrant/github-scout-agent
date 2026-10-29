@@ -468,3 +468,146 @@ def list_model_ids(
     if not ids:
         raise ModelAdapterError("model endpoint returned no models", code="model_list_empty", category="protocol")
     return ids
+
+
+_NON_CHAT_HINTS = (
+    "embed",
+    "rerank",
+    "tts-",
+    "whisper",
+    "transcri",
+    "dall-e",
+    "moderation",
+    "sdxl",
+    "stable-diffusion",
+    "flux-",
+    "audio-preview",
+    "realtime",
+)
+
+
+def looks_like_chat_model(model: str) -> bool:
+    """Cheap pre-filter: embedding / rerank / speech / image models never call tools."""
+
+    lowered = model.casefold()
+    return not any(hint in lowered for hint in _NON_CHAT_HINTS)
+
+
+def probe_tool_calling(
+    base_url: str,
+    model: str,
+    api_key: str | None = None,
+    *,
+    transport: httpx.BaseTransport | None = None,
+    timeout: float = 20.0,
+) -> dict[str, object]:
+    """Ask the provider whether one model accepts an OpenAI-style tools array.
+
+    The research loop is a strict Tool Calling client, so a model that rejects the
+    tools parameter can never run a task. This probe sends the smallest possible
+    request and classifies the answer:
+
+    supported=True   the provider accepted tools (the model may still answer in
+                     prose, which is fine -- the parameter is accepted);
+    supported=False  the provider rejected tools as unsupported;
+    supported=None   inconclusive (auth, 404, rate limit, timeout, upstream).
+    """
+
+    identifier = (model or "").strip()
+    if not identifier or len(identifier) > 200 or any(ord(ch) < 32 for ch in identifier):
+        raise ModelAdapterError("model name is invalid", code="invalid_model_name", category="input")
+
+    if not looks_like_chat_model(identifier):
+        return {
+            "model": identifier,
+            "supported": False,
+            "reason": "non_chat_model",
+            "detail": "embedding / speech / image models cannot call tools",
+            "status_code": None,
+        }
+
+    url = _validate_base_url(base_url)
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    payload = {
+        "model": identifier,
+        "messages": [{"role": "user", "content": "Reply with the single word: ok"}],
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "scout_probe",
+                    "description": "Capability probe with no side effects.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ],
+        "max_tokens": 8,
+        "temperature": 0,
+        "stream": False,
+    }
+
+    try:
+        with httpx.Client(timeout=timeout, transport=transport, follow_redirects=False) as client:
+            response = client.post(url, headers=headers, json=payload)
+            content = response.content[:1_000_000]
+            status_code = response.status_code
+    except httpx.TimeoutException:
+        return {"model": identifier, "supported": None, "reason": "timeout", "detail": "probe timed out", "status_code": None}
+    except httpx.RequestError as exc:
+        return {
+            "model": identifier,
+            "supported": None,
+            "reason": "network",
+            "detail": _safe_network_error_detail(exc),
+            "status_code": None,
+        }
+
+    detail = _upstream_message(content)
+    lowered = content[:4096].decode("utf-8", errors="replace").casefold()
+
+    if 200 <= status_code < 300:
+        try:
+            parsed = json.loads(content)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return {"model": identifier, "supported": None, "reason": "invalid_response", "detail": detail, "status_code": status_code}
+        choices = parsed.get("choices") if isinstance(parsed, Mapping) else None
+        if not isinstance(choices, list) or not choices:
+            return {"model": identifier, "supported": None, "reason": "invalid_response", "detail": detail, "status_code": status_code}
+        message = choices[0].get("message") if isinstance(choices[0], Mapping) else None
+        used_tools = isinstance(message, Mapping) and bool(message.get("tool_calls"))
+        return {
+            "model": identifier,
+            "supported": True,
+            "reason": "tool_calls_returned" if used_tools else "tools_accepted",
+            "detail": detail,
+            "status_code": status_code,
+        }
+
+    tool_related = "tool" in lowered or "function" in lowered
+    if status_code in {400, 422} and tool_related:
+        return {
+            "model": identifier,
+            "supported": False,
+            "reason": "tools_rejected",
+            "detail": detail,
+            "status_code": status_code,
+        }
+    if status_code == 401:
+        return {"model": identifier, "supported": None, "reason": "auth", "detail": detail, "status_code": status_code}
+    if status_code == 403:
+        # the key works, but this account may not call this particular model
+        return {"model": identifier, "supported": False, "reason": "no_access", "detail": detail, "status_code": status_code}
+    if status_code == 404:
+        return {"model": identifier, "supported": None, "reason": "not_found", "detail": detail, "status_code": status_code}
+    if status_code == 429:
+        return {"model": identifier, "supported": None, "reason": "rate_limited", "detail": detail, "status_code": status_code}
+    return {
+        "model": identifier,
+        "supported": None,
+        "reason": "http_error" if status_code < 500 else "upstream_error",
+        "detail": detail,
+        "status_code": status_code,
+    }
+

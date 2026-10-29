@@ -34,7 +34,7 @@ from .config import (
 )
 from .events import AgentEvent, EventRecorder
 from .github_api import GitHubRestClient
-from .model_client import ModelAdapterError, OpenAICompatibleClient, list_model_ids
+from .model_client import ModelAdapterError, OpenAICompatibleClient, list_model_ids, probe_tool_calling
 
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
@@ -399,6 +399,75 @@ async def list_available_models(payload: ModelListPayload) -> dict:
             "used_saved_key": used_saved_key,
         }
     return {"ok": True, "models": models, "count": len(models), "used_saved_key": used_saved_key}
+
+
+class ModelProbePayload(BaseModel):
+    """Batch capability probe: does this endpoint accept Tool Calling for these models?"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model_base_url: str = Field(min_length=1, max_length=500)
+    model_api_key: str | None = Field(default=None, max_length=4096)
+    models: list[str] = Field(default_factory=list, max_length=200)
+
+
+# Probing one model costs a single tiny completion, so fan out a little but stay polite.
+MODEL_PROBE_CONCURRENCY = 6
+
+
+@web_app.post("/api/settings/models/probe")
+async def probe_model_capabilities(payload: ModelProbePayload) -> dict:
+    stored = read_settings()
+    base_url = payload.model_base_url.strip()
+    api_key = (payload.model_api_key or "").strip()
+    used_saved_key = False
+    if not api_key:
+        saved_key = stored.get("model_api_key")
+        if saved_key:
+            api_key = str(saved_key)
+            used_saved_key = True
+    try:
+        AppConfig(model_base_url=base_url)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=_validation_detail(exc)) from exc
+
+    wanted = [model for model in (m.strip() for m in payload.models) if model][:200]
+    if not wanted:
+        return {"ok": True, "count": 0, "results": [], "used_saved_key": used_saved_key}
+
+    semaphore = asyncio.Semaphore(MODEL_PROBE_CONCURRENCY)
+    key_lost = False
+
+    async def probe_one(model: str) -> dict[str, object]:
+        nonlocal key_lost
+        if key_lost:
+            return {"model": model, "supported": None, "reason": "skipped", "detail": None, "status_code": None}
+        async with semaphore:
+            if key_lost:
+                return {"model": model, "supported": None, "reason": "skipped", "detail": None, "status_code": None}
+            try:
+                result = await asyncio.to_thread(probe_tool_calling, base_url, model, api_key or None)
+            except ModelAdapterError as exc:
+                return {"model": model, "supported": None, "reason": "invalid", "detail": str(exc), "status_code": exc.status_code}
+            if result.get("reason") == "auth":
+                key_lost = True
+            return result
+
+    results = await asyncio.gather(*(probe_one(model) for model in wanted))
+    supported = sum(1 for item in results if item.get("supported") is True)
+    rejected = sum(1 for item in results if item.get("supported") is False)
+    unknown = len(results) - supported - rejected
+    return {
+        "ok": True,
+        "count": len(results),
+        "supported": supported,
+        "rejected": rejected,
+        "unknown": unknown,
+        "aborted": key_lost,
+        "used_saved_key": used_saved_key,
+        "results": results,
+    }
+
 
 
 @web_app.post("/api/run")
