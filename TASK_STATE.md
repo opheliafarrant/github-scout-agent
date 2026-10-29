@@ -11,7 +11,7 @@
   - F1-02: 运行环境确认：Python 3.13.5、pip 25.1.1、Git 2.53.0；核心依赖 httpx 0.28.1、pydantic 2.14.1、typer 0.27.3、fastapi 0.115+、uvicorn 0.30+、pytest 8.4.2。
   - F1-03: 七大 GitHub 只读工具固定：`search_public_repositories`、`get_public_repository`、`get_known_repository`、`get_public_readme`、`replace_candidate_with_readme`、`get_repository_license`、`get_repository_languages_and_topics`，限制官方 `api.github.com`、公开仓库、GET-only 与 64 KiB 流式截断保护。
   - F1-04: 多模型端点兼容性已实测 [E3]: DeepSeek (`deepseek-flash`) 与 Qwen-Max (`qwen-max`) 真实链路在线验收全部通过。
-  - F1-05: 离线测试与自动化套件：完整自动化回归 `209 passed, 1 deselected, 1 warning in 7.79s` [E3: pytest]，compileall 零错误，语法与协议全面自洽。
+  - F1-05: 离线测试与自动化套件：完整自动化回归 `214 passed, 1 deselected, 1 warning in 7.89s` [E3: pytest]，compileall 零错误，语法与协议全面自洽。
   - F1-06: 缺陷与时序修复已固化：B1 闭包晚绑定、B2 Callable 类型、B3 None 守卫、B4 Gate A dict 纯函数构建、M1 thinking_mode 字面量校验、P0 提示词时序引导、P0 预算放宽可配。
   - F1-07: 候选发现与采纳机制完全解耦（Commit 822c616）：搜索结果不再自动锁定候选容量；仅在显式调查时消耗配额；证据门控拦截过早停步。
   - F1-08: Q1~Q3 深度修复与意图穿透固化：空结果促发更宽泛查询；消除空候选提前收尾；README 关键词强制 require_candidate_readme 门控。
@@ -29,6 +29,7 @@
   - F1-21: Web UI 图形化模型配置固化 [E3: 205 passed, 1 deselected, 1 warning in 5.53s；真实 HTTP 冒烟：GET /api/settings 掩码 sk-…3456、PUT 后 /api/config 转 ready、外部 http 端点 422、磁盘文件无明文]：新增设置弹窗（5 预设 + 高级选项 + 内联校验）与 GET/PUT /api/settings；配置二级来源 %APPDATA%\GitHubScoutAgent\config.json（GITHUB_SCOUT_SETTINGS_FILE 可覆盖），环境变量优先级不变；密钥经 Windows DPAPI 加密为 dpapi: 前缀落盘，接口仅回显掩码；历史文件路径改由 default_history_path() 统一至 %APPDATA%。
   - F1-22: 桌面分发 Phase B 交付 [E3: `dist/GitHubScoutAgent/GitHubScoutAgent.exe` 实测]：PyInstaller 6.22.3 onedir 构建，PE Subsystem=2（无控制台窗口），产物 8.5 MB exe / 41 MB 目录；`templates/index.html` 已随包（GET / → 200，28962 字节，含 ⚙ 设置入口）；实测 `web --port 8091` 与**双击式无参启动**均正常，无参启动自动占用 8080 并唤起浏览器（日志可见浏览器 GET / 与 /api/history）；系统无控制台时 stdout 重定向至 `%APPDATA%\GitHubScoutAgent\logs\web-ui.log`（686 字节实测写入）；二次双击检测到既有实例 → 仅唤浏览器，进程数保持 1、无冗余监听；运行后防火墙规则新增数 = 0（仅监听 127.0.0.1 未触发提示框）。打包资产集中于 `packaging/`（launcher.py / github_scout_agent.spec / version_info.txt），build/ 与 dist/ 已 gitignore，源码零重复。
   - F1-20: Web UI 历史记录本地持久化与并发安全固化 [E3: 188 passed, 1 deselected in 5.34s]：引入 HistoryStore 抽象，支持本地 JSONL 原子持久化（.scout/web_history.jsonl），threading.Lock 互斥保护多工作线程读写，uuid4 随机熵防止 task_id 碰撞，FIFO 淘汰上限 100 条杜绝内存泄漏；覆盖重启重载、容量限制、并发多线程与损坏行自愈单测。
+- F1-23: 桌面成品 UI/功能审计修复固化 [E3: 214 passed；重建 exe 后 CDP 真实浏览器复测：console 零报错、Ollama 无 Key → ready:true 且 run 越过 not_configured 进入 network_error、空任务给出提示]：修复 4 项真实缺陷——(1) 回环端点（Ollama/LM Studio/vLLM）无 Key 时被判定 not_configured，预设可选但永远跑不起来（config.model_ready 与 OpenAICompatibleClient 双门控，现允许 loopback 无 Key 且省略 Authorization 头）；(2) 页面缺 favicon 导致每次加载 404；(3) 四个预算输入框 label 无 for/id 关联、任务输入框缺可访问名；(4) 空任务点击开始静默无反馈。新增 5 个回归单测覆盖密钥无关回环放行与远端仍强制 Key。
 - F2 Decision Baseline (已批准架构与决策边界):
   - F2-01 (D1): CLI 与本地 Web UI (FastAPI+SSE) 双入口；采用 PyInstaller + Inno Setup 的轻量桌面分发（用户 2026-10-29 授权修订，原条款「不采用桌面端安装包」废止；仍不采用 Electron/Tauri 等重型桌面框架）。
   - F2-02 (D2): 严格只读与公开边界；支持无 Token (60次/h) 与用户只读 Token (5000次/h)；Token 不进模型/日志/报告/Git。
@@ -43,6 +44,7 @@
 ## 3. Current Engineering Flow and Impediments
 - Current Impediment / Stop Point: 无阻碍。T55 Phase B 已交付（双击即用、无控制台、单实例唤浏览器，209 通过）；Phase C Inno Setup 安装包待执行；代码签名（Phase D）为可选项。
 - [ ] T56: Inno Setup 安装包（Phase C）-> 目标产物: packaging/installer.iss + setup.exe；含开始菜单/桌面快捷方式、卸载项、安装时静默写入仅限 127.0.0.1 的入站防火墙规则（避免首次运行弹窗）。
+- [x] T57: 桌面成品 UI/功能审计与缺陷修复：用真实无头 Chrome 走查首屏/设置/预设/校验/保存/空任务全链路，修复回环端点无 Key、favicon 404、label 关联、空任务提示四项，重建 exe 复测零 console 报错 [E3: 214 passed]。
 - [x] T55: 桌面分发 Phase B：PyInstaller onedir 无控制台构建、packaging/ 资产隔离（launcher/spec/version_info）、无参启动隐式 web、端口占用自动顺延、单实例唤浏览器、windowed 下 stdout 重定向日志；新增 4 个 launcher 单测 [E3: 209 passed；双击实测 200 OK]。
 - [x] T54: Web UI 图形化模型配置：新增设置弹窗（预设端点/高级选项/内联校验）、GET+PUT /api/settings、%APPDATA% 二级配置来源、DPAPI 密钥加密与掩码回显、历史路径统一；新增 tests/conftest.py 与 17 个单测 [E3: 205 passed]。
 - [x] T53: Web UI 历史记录本地持久化与并发安全治理：实现 HistoryStore、互斥锁、UUID task_id 与 JSONL 存储，新增 4 个单测，回归通过 [E3: 188 passed]。

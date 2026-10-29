@@ -20,7 +20,7 @@ from pydantic import SecretStr, ValidationError
 
 from .agent_models import AgentMessage, AssistantResponse, ModelCallError, ModelUsage, ToolCall
 from .budget import BudgetExceeded, RequestBudget
-from .config import AppConfig
+from .config import AppConfig, is_loopback_endpoint
 
 
 class ModelAdapterError(ModelCallError):
@@ -117,7 +117,7 @@ class OpenAICompatibleClient:
         self.max_tokens = max_tokens
         self.max_retries = max(0, max_retries)
         self._api_key = api_key.get_secret_value() if isinstance(api_key, SecretStr) else api_key
-        if not self._api_key:
+        if not self._api_key and not is_loopback_endpoint(self.endpoint):
             raise ModelAdapterError("model API Key is not configured", code="model_not_configured", category="configuration")
         self.budget = budget or RequestBudget()
         self._client = httpx.Client(
@@ -176,8 +176,9 @@ class OpenAICompatibleClient:
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {self._api_key}",
         }
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
 
         for attempt in range(1, self.max_retries + 2):
             self.budget.check_task_time()

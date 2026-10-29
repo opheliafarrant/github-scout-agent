@@ -44,6 +44,16 @@ SETTINGS_FIELDS = (
 
 SECRET_PREFIX = "dpapi:"
 
+LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def is_loopback_endpoint(value: str | None) -> bool:
+    """Return whether a URL points at this machine, where keyless local servers live."""
+
+    if not value:
+        return False
+    return (urlparse(value).hostname or "").lower() in LOOPBACK_HOSTS
+
 
 class AppConfig(BaseModel):
     """User configuration with secrets kept out of normal representations."""
@@ -65,8 +75,7 @@ class AppConfig(BaseModel):
             return None
         parsed = urlparse(value)
         hostname = (parsed.hostname or "").lower()
-        local_http_hosts = {"localhost", "127.0.0.1", "::1"}
-        local_http = parsed.scheme == "http" and hostname in local_http_hosts
+        local_http = parsed.scheme == "http" and hostname in LOOPBACK_HOSTS
         if (parsed.scheme != "https" and not local_http) or not parsed.netloc:
             raise ValueError("model_base_url must be HTTPS; HTTP is allowed only for localhost development")
         if parsed.username or parsed.password or parsed.query or parsed.fragment or ".." in parsed.path:
@@ -77,7 +86,11 @@ class AppConfig(BaseModel):
     def model_ready(self) -> bool:
         """Return whether the minimum model configuration is present."""
 
-        return bool(self.model_base_url and self.model and self.model_api_key)
+        return bool(
+            self.model_base_url
+            and self.model
+            and (self.model_api_key or is_loopback_endpoint(self.model_base_url))
+        )
 
 
 def default_app_dir() -> Path:

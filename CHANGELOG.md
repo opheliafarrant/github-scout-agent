@@ -22,11 +22,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 - API keys and GitHub tokens are encrypted at rest with Windows DPAPI (stored as `dpapi:<ciphertext>`); all API responses return only masked hints (`sk-…abcd`) and never the plaintext secret.
 
+### Fixed
+- Keyless local endpoints (ollama, LM Studio, vLLM on `127.0.0.1`) are now usable: `model_ready` accepts a loopback Base URL without an API key, and the client omits the `Authorization` header instead of refusing to start. Previously the shipped Ollama preset saved successfully but left the app permanently `not_configured`.
+- Added the missing favicon so every page load no longer logs a 404.
+- Associated the four budget inputs with their labels (`for`/`id`) and gave the task textarea an accessible name.
+- Submitting an empty task now shows an actionable hint in the event feed instead of silently doing nothing.
+
 ### Changed
 - `github-scout-agent web` now opens the default browser automatically; pass `--no-browser` (or set `GITHUB_SCOUT_NO_BROWSER=1`) to keep it headless.
 - First run of the settings dialog pre-selects the DeepSeek preset and prefills its endpoint and model, so a new user only has to paste an API key.
 - Web history now persists to `%APPDATA%\GitHubScoutAgent\web_history.jsonl` instead of depending on the current working directory, so an installation under `Program Files` stays writable.
-- Test suite expanded to 209 cases (17 configuration/settings tests plus 4 frozen-launcher tests).
+- Test suite expanded to 214 cases (22 configuration/settings tests including 5 keyless-loopback cases, plus 4 frozen-launcher tests).
 - Build assets are isolated in `packaging/`; `build/` and `dist/` remain git-ignored, so the source tree keeps a single implementation.
 - Converted all internal documentation links in `README.md` to clean repository-relative paths.
 - Updated `README.md` header badge to official `Apache-2.0`.

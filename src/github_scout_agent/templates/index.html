@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>GitHub Scout Agent</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%94%8D%3C/text%3E%3C/svg%3E">
 <style>
 :root {
   --bg: #0d1117; --surface: #161b22; --border: #30363d;
@@ -134,13 +135,13 @@ details.advanced summary{cursor:pointer;font-size:13px;color:var(--muted);margin
     <button onclick="openSettings()">去配置</button>
   </div>
   <div class="input-area">
-    <textarea id="task-input" placeholder="Describe what you want to find on GitHub...
+    <textarea id="task-input" aria-label="任务描述" placeholder="Describe what you want to find on GitHub...
 Example: Find three open-source Python AI agents that can search GitHub repositories, analyze README files, and recommend projects with evidence."></textarea>
     <div class="row">
-      <label>Max candidates</label><input id="max-candidates" type="number" value="3" min="1" max="10">
-      <label>Model calls</label><input id="max-model" type="number" value="12" min="1" max="30">
-      <label>GitHub reqs</label><input id="max-gh" type="number" value="20" min="1" max="60">
-      <label>Timeout (s)</label><input id="max-time" type="number" value="180" min="10" max="600">
+      <label for="max-candidates">Max candidates</label><input id="max-candidates" type="number" value="3" min="1" max="10">
+      <label for="max-model">Model calls</label><input id="max-model" type="number" value="12" min="1" max="30">
+      <label for="max-gh">GitHub reqs</label><input id="max-gh" type="number" value="20" min="1" max="60">
+      <label for="max-time">Timeout (s)</label><input id="max-time" type="number" value="180" min="10" max="600">
       <button id="run-btn" translate="no" class="notranslate" onclick="startTask()">▶ Start Research</button>
     </div>
   </div>
@@ -400,7 +401,13 @@ async function loadReport(id){
 
 async function startTask(){
   const task = document.getElementById('task-input').value.trim();
-  if(!task) return;
+  if(!task){
+    const hint = document.getElementById('event-feed');
+    hint.classList.add('visible');
+    hint.innerHTML = '<div style="color:var(--warn);font-size:13px">请先在上面描述你要找什么，例如「找三个能搜索 GitHub 的 Python Agent 框架」。</div>';
+    document.getElementById('task-input').focus();
+    return;
+  }
   const btn = document.getElementById('run-btn');
   btn.disabled = true; btn.textContent = 'Running...';
   

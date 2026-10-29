@@ -4,6 +4,7 @@ import json
 import sys
 from pathlib import Path
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -21,6 +22,8 @@ from github_scout_agent.config import (
     unprotect_secret,
     write_settings,
 )
+from github_scout_agent.agent_models import AgentMessage
+from github_scout_agent.model_client import ModelAdapterError, OpenAICompatibleClient
 from github_scout_agent.web_server import web_app
 
 from typing import Iterator
@@ -277,3 +280,69 @@ def test_update_settings_allows_local_http_endpoint(settings_file: Path) -> None
 def test_validate_model_base_url_still_rejects_remote_http() -> None:
     with pytest.raises(Exception):
         AppConfig(model_base_url="http://api.example.com/v1", model="m", model_api_key="k")
+
+
+LOOPBACK_BASE_URL = "http://127.0.0.1:11434/v1"
+
+
+def test_loopback_endpoint_is_ready_without_api_key() -> None:
+    config = AppConfig(model_base_url=LOOPBACK_BASE_URL, model="qwen2.5:7b")
+
+    assert config.model_ready is True
+    assert model_configuration_status(config) == "ready"
+
+
+def test_remote_endpoint_still_requires_an_api_key() -> None:
+    config = AppConfig(model_base_url="https://api.deepseek.com/v1", model="deepseek-chat")
+
+    assert config.model_ready is False
+    assert model_configuration_status(config) == "incomplete"
+
+
+def test_settings_route_reports_loopback_endpoint_as_ready(
+    client: TestClient, settings_file: Path
+) -> None:
+    response = client.put(
+        "/api/settings",
+        json={"model_base_url": LOOPBACK_BASE_URL, "model": "qwen2.5:7b"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ready"] is True
+    assert body["has_key"] is False
+    assert read_settings(settings_file)["model"] == "qwen2.5:7b"
+
+
+def test_keyless_loopback_client_sends_no_authorization_header() -> None:
+    requests: list[httpx.Request] = []
+
+    def dispatch(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={"choices": [{"finish_reason": "stop", "message": {"role": "assistant", "content": "ok"}}]},
+            request=request,
+        )
+
+    client = OpenAICompatibleClient(
+        base_url=LOOPBACK_BASE_URL,
+        api_key=None,
+        model="qwen2.5:7b",
+        transport=httpx.MockTransport(dispatch),
+    )
+    with client:
+        client.complete([AgentMessage(role="user", content="hi")], [])
+
+    assert len(requests) == 1
+    assert "authorization" not in requests[0].headers
+    assert requests[0].url.host == "127.0.0.1"
+
+
+def test_remote_client_still_rejects_a_missing_key() -> None:
+    with pytest.raises(ModelAdapterError) as excinfo:
+        OpenAICompatibleClient(
+            base_url="https://api.deepseek.com/v1", api_key=None, model="deepseek-chat"
+        )
+
+    assert excinfo.value.code == "model_not_configured"
