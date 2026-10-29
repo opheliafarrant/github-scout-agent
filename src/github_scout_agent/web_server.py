@@ -58,6 +58,7 @@ class TaskStatus(BaseModel):
     started_at: float
     report: str = ""
     budget: dict = Field(default_factory=dict)
+    feedback_trace: list[dict] = Field(default_factory=list)
 
 
 class HistoryStore:
@@ -139,6 +140,7 @@ class HistoryStore:
         termination_reason: str | None = None,
         report: str | None = None,
         budget: dict | None = None,
+        feedback_trace: list[dict] | None = None,
     ) -> TaskStatus | None:
         with self._lock:
             task = self._tasks.get(task_id)
@@ -152,6 +154,8 @@ class HistoryStore:
                 task.report = report
             if budget is not None:
                 task.budget = budget
+            if feedback_trace is not None:
+                task.feedback_trace = feedback_trace
             self._persist_locked()
             return task
 
@@ -502,7 +506,8 @@ async def _run_and_stream(task_id: str, req: TaskRequest, request: Request) -> A
         max_github_requests=req.max_github_requests,
         max_candidates=req.max_candidates,
         max_task_seconds=req.max_task_seconds,
-        max_feedback_bytes=128 * 1024,
+        max_feedback_bytes=512 * 1024,
+        max_feedback_item_bytes=64 * 1024,
         max_model_response_bytes=32 * 1024,
         max_response_bytes=256 * 1024,
     )
@@ -531,6 +536,7 @@ async def _run_and_stream(task_id: str, req: TaskRequest, request: Request) -> A
                 termination_reason=result.termination_reason,
                 report=report,
                 budget=result.budget,
+                feedback_trace=result.feedback_trace,
             )
         except Exception as exc:
             _store.update(task_id, status="error", termination_reason=str(exc))
@@ -563,6 +569,7 @@ async def _run_and_stream(task_id: str, req: TaskRequest, request: Request) -> A
             "termination_reason": status.termination_reason if status else "",
             "report": status.report if status else "",
             "budget": status.budget if status else {},
+            "feedback_trace": status.feedback_trace if status else [],
         })
 
 
@@ -586,6 +593,7 @@ async def report(task_id: str) -> dict:
         "termination_reason": status.termination_reason,
         "report": status.report,
         "budget": status.budget,
+        "feedback_trace": status.feedback_trace,
     }
 
 

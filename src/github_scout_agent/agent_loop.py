@@ -50,6 +50,7 @@ class AgentRunResult(BaseModel):
     budget: dict[str, object]
     evidence_complete: bool | None = None
     evidence_gaps: list[str] = Field(default_factory=list)
+    feedback_trace: list[dict[str, object]] = Field(default_factory=list)
 
 
 class AgentLoop:
@@ -136,6 +137,20 @@ class AgentLoop:
 
         self.events.emit("task_started", input_length=len(user_task))
         while True:
+            if self.budget.feedback_exhausted:
+                termination_reason = "feedback_bytes"
+                if (
+                    not finalization_done
+                    and self.config.finalization_reserve_calls > 0
+                    and self._has_candidates(tool_results)
+                    and self._finalization_call_available()
+                ):
+                    finalization_done = True
+                    return self._finalize(
+                        messages, tool_results, final_text, stop_reason=termination_reason
+                    )
+                self.events.emit("task_terminated", reason=termination_reason, budget=self.budget.snapshot())
+                return self._result("terminated", termination_reason, final_text, messages, tool_results)
             if (
                 not finalization_done
                 and self.config.finalization_reserve_calls > 0
@@ -175,15 +190,14 @@ class AgentLoop:
                 usage=response.usage.model_dump() if response.usage else {"status": "unknown"},
             )
 
+            message = response.as_message()
             if response.content:
-                try:
-                    self.budget.record_feedback_size(len(response.content.encode("utf-8")))
-                except BudgetExceeded as exc:
-                    termination_reason = exc.dimension
-                    self.events.emit("task_terminated", reason=termination_reason, budget=self.budget.snapshot())
-                    return self._result("terminated", termination_reason, final_text, messages, tool_results)
+                message.content = self._clip_feedback_text(
+                    response.content, self.budget, source="model", label="assistant"
+                )
+                self.budget.record_feedback_size(len(message.content.encode("utf-8")), source="model", label="assistant")
 
-            messages.append(response.as_message())
+            messages.append(message)
             if not response.tool_calls:
                 final_text = response.content
                 evidence_ok, evidence_gaps = self._evidence_complete(tool_results, executed_calls)
@@ -239,6 +253,9 @@ class AgentLoop:
                     ok=result.ok,
                     error_code=result.error.code if result.error else None,
                     request_count=result.request_count,
+                    result_bytes=len(result.model_dump_json().encode("utf-8")),
+                    feedback_bytes=int(self.budget.feedback_records[-1]["bytes"]) if self.budget.feedback_records else 0,
+                    feedback_bytes_used=self.budget.feedback_bytes_used,
                 )
                 self.events.emit("budget_updated", **self.budget.snapshot())
 
@@ -338,11 +355,6 @@ class AgentLoop:
             )
         else:
             self.events.emit("tool_call_validated", tool_call_id=call.id, tool_name=call.name)
-        feedback = result.model_dump_json()
-        try:
-            self.budget.record_feedback_size(len(feedback.encode("utf-8")))
-        except BudgetExceeded as exc:
-            return self._blocked_result(call, "feedback_bytes", str(exc), request_count=result.request_count)
         return result
 
     def _dispatch_batch_call(
@@ -571,6 +583,12 @@ class AgentLoop:
                 "Note: Further search was stopped because repeated identical queries were blocked. "
                 "Synthesize and present findings from the evidence acquired so far."
             )
+        elif stop_reason == "feedback_bytes":
+            prompt_lines.append(
+                "Note: Further research stopped because the prompt-size budget was exhausted; "
+                "some tool results were clipped. Synthesize from the evidence acquired so far and "
+                "state the truncation in Evidence Gaps."
+            )
         elif stop_reason in {"github_requests", "research_budget_boundary"}:
             prompt_lines.append(
                 "Note: Further research reached the request budget boundary. "
@@ -617,15 +635,44 @@ class AgentLoop:
             arguments = call.arguments
         return f"{call.name}:{arguments}"
 
-    @staticmethod
-    def _tool_message(call_id: str, result: ToolResult, budget: RequestBudget) -> AgentMessage:
+    def _tool_message(self, call_id: str, result: ToolResult, budget: RequestBudget) -> AgentMessage:
         payload = result.model_dump(mode="json")
         payload["_budget"] = budget.snapshot()
+        text = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        text = self._clip_feedback_text(text, budget, source="tool", label=result.tool_name)
+        budget.record_feedback_size(len(text.encode("utf-8")), source="tool", label=result.tool_name)
         return AgentMessage(
             role="tool",
             tool_call_id=call_id,
-            content=json.dumps(payload, ensure_ascii=False, sort_keys=True),
+            content=text,
         )
+
+    def _clip_feedback_text(
+        self,
+        text: str,
+        budget: RequestBudget,
+        *,
+        source: str,
+        label: str,
+    ) -> str:
+        """Keep one prompt-bound payload under the per-message byte ceiling."""
+
+        limit = budget.max_feedback_item_bytes
+        size = len(text.encode("utf-8"))
+        if limit is None or size <= limit:
+            return text
+        suffix = f"…[truncated: original {size} bytes, limit {limit}]"
+        allowance = max(limit - len(suffix.encode("utf-8")), 0)
+        kept = text.encode("utf-8")[:allowance].decode("utf-8", "ignore")
+        clipped = kept + suffix
+        self.events.emit(
+            "feedback_clipped",
+            source=source,
+            label=label,
+            original_bytes=size,
+            kept_bytes=len(clipped.encode("utf-8")),
+        )
+        return clipped
 
     @staticmethod
     def _blocked_result(
@@ -678,4 +725,5 @@ class AgentLoop:
                 tool_results,
                 getattr(self, "_executed_calls", []),
             )[1],
+            feedback_trace=self.budget.feedback_trace(),
         )

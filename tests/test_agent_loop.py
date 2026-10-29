@@ -87,7 +87,7 @@ def test_empty_search_feedback_drives_query_rewrite_and_completion() -> None:
         requests.append(request)
         return _search_or_readme_handler(request)
 
-    budget = RequestBudget(max_github_requests=5, max_model_calls=5, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_github_requests=5, max_model_calls=5, max_feedback_bytes=512 * 1024)
     with _client(handler, budget) as client:
         loop = AgentLoop(
             model=ScenarioMockLLM("empty_rewrite"),
@@ -110,7 +110,7 @@ def test_candidate_feedback_drives_readme_followup() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return _search_or_readme_handler(request)
 
-    budget = RequestBudget(max_github_requests=5, max_model_calls=5, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_github_requests=5, max_model_calls=5, max_feedback_bytes=512 * 1024)
     with _client(handler, budget) as client:
         result = AgentLoop(
             model=ScenarioMockLLM("readme_followup"),
@@ -128,7 +128,7 @@ def test_candidate_feedback_drives_readme_followup() -> None:
 
 
 def test_full_candidate_capacity_does_not_block_readme_followup_for_accepted_repo() -> None:
-    budget = RequestBudget(max_candidates=5, max_github_requests=5, max_model_calls=5, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_candidates=5, max_github_requests=5, max_model_calls=5, max_feedback_bytes=512 * 1024)
     with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_full_pool_handler)) as client:
         result = AgentLoop(
             model=ScenarioMockLLM("readme_followup"),
@@ -149,7 +149,7 @@ def test_successful_search_can_finalize_without_an_extra_research_model_turn() -
         AssistantResponse(content="Final comparison based on returned repository metadata."),
     ]
     mock = ScriptedMockLLM(responses)
-    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=512 * 1024)
     with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_full_pool_handler)) as client:
         result = AgentLoop(
             model=mock,
@@ -171,7 +171,7 @@ def test_finalization_prevents_repeated_search_after_candidates_are_found() -> N
         AssistantResponse(content="Final comparison after one bounded search."),
     ]
     mock = ScriptedMockLLM(responses)
-    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=512 * 1024)
     with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_full_pool_handler)) as client:
         result = AgentLoop(
             model=mock,
@@ -192,7 +192,7 @@ def test_finalization_does_not_execute_new_tool_calls() -> None:
         AssistantResponse(tool_calls=[ToolCall(id="late", name="search_public_repositories", arguments=json.dumps({"query": "late"}))]),
     ]
     mock = ScriptedMockLLM(responses)
-    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=512 * 1024)
     with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_full_pool_handler)) as client:
         result = AgentLoop(
             model=mock,
@@ -259,7 +259,7 @@ def test_t24_batch_budget_stop_preserves_ids_and_reaches_finalization() -> None:
         AssistantResponse(tool_calls=calls),
         AssistantResponse(content="Recommendation based on verified evidence."),
     ])
-    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=512 * 1024)
     with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_t24_batch_handler)) as client:
         result = AgentLoop(
             model=mock,
@@ -287,7 +287,7 @@ def test_t24_large_batch_stops_without_network_overrun_or_finalization_without_e
         ToolCall(id="readme", name="get_public_readme", arguments=json.dumps({"owner": "octo", "repo": "repo-0"})),
     ]
     mock = ScriptedMockLLM([AssistantResponse(tool_calls=calls), AssistantResponse(content="must not reach")])
-    budget = RequestBudget(max_candidates=3, max_github_requests=2, max_model_calls=5, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_candidates=3, max_github_requests=2, max_model_calls=5, max_feedback_bytes=512 * 1024)
     with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_t24_batch_handler)) as client:
         result = AgentLoop(model=mock, tools=build_github_tool_registry(client), budget=budget).run("bounded")
 
@@ -311,7 +311,7 @@ def test_t24_github_boundary_finalization_tool_call_never_reaches_network() -> N
             ToolCall(id="late", name="get_public_readme", arguments=json.dumps({"owner": "octo", "repo": "repo-0"}))
         ]),
     ])
-    budget = RequestBudget(max_candidates=3, max_github_requests=2, max_model_calls=5, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_candidates=3, max_github_requests=2, max_model_calls=5, max_feedback_bytes=512 * 1024)
     with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_t24_batch_handler)) as client:
         result = AgentLoop(
             model=mock,
@@ -333,7 +333,7 @@ def test_t24_normal_research_path_does_not_force_finalization() -> None:
         ]),
         AssistantResponse(content="normal completion"),
     ])
-    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=512 * 1024)
     with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_t24_batch_handler)) as client:
         result = AgentLoop(
             model=mock,
@@ -391,7 +391,7 @@ def test_t29_required_evidence_reaches_finalization_only_after_all_readmes() -> 
         AssistantResponse(tool_calls=readme_calls),
         AssistantResponse(content="Three Python candidates have README-backed tool-calling evidence."),
     ])
-    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=512 * 1024)
     with GitHubRestClient(
         budget=budget,
         required_language="Python",
@@ -466,7 +466,7 @@ def test_t29_missing_candidate_readme_forces_partial_evidence_status() -> None:
         ]),
         AssistantResponse(content="Partial comparison; two README checks remain unknown."),
     ])
-    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=512 * 1024)
     with GitHubRestClient(
         budget=budget,
         required_language="Python",
@@ -512,7 +512,7 @@ def test_capacity_blocked_batch_reaches_next_model_without_evidence_policy(requi
             return super().complete(messages, tools, tool_choice=tool_choice)
 
     model = RecordingModel()
-    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=512 * 1024)
     with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_full_pool_handler), max_retries=0) as client:
         result = AgentLoop(
             model=model,
@@ -562,7 +562,7 @@ def test_t34_three_search_batch_continues_to_readme_and_finalization(missing_rea
             return httpx.Response(404, json={"message": "Not Found"}, request=request)
         return _t29_python_evidence_handler(request)
 
-    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=3 if missing_readme else 5, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=3 if missing_readme else 5, max_feedback_bytes=512 * 1024)
     with GitHubRestClient(
         budget=budget,
         required_language="Python",
@@ -607,7 +607,7 @@ def test_full_candidate_capacity_blocks_new_search_but_allows_accepted_followup(
         AssistantResponse(tool_calls=[ToolCall(id="readme-1", name="get_public_readme", arguments=json.dumps({"owner": "octo", "repo": "repo-0"}))]),
         AssistantResponse(content="partial evidence is sufficient"),
     ]
-    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=4, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=4, max_feedback_bytes=512 * 1024)
     with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_full_pool_handler)) as client:
         result = AgentLoop(
             model=ScriptedMockLLM(responses),
@@ -628,7 +628,7 @@ def test_three_search_batch_with_no_model_budget_returns_partial() -> None:
         for index in range(3)
     ]
     model = ScriptedMockLLM([AssistantResponse(tool_calls=calls)])
-    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=1, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=1, max_feedback_bytes=512 * 1024)
     with GitHubRestClient(
         budget=budget,
         required_language="Python",
@@ -659,7 +659,7 @@ def test_repeated_capacity_blocked_searches_stop_at_model_budget_without_more_ne
         AssistantResponse(tool_calls=[ToolCall(id=f"search-{index}", name="search_public_repositories", arguments=json.dumps({"query": f"query {index}"}))])
         for index in range(5)
     ]
-    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=512 * 1024)
     with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_full_pool_handler)) as client:
         result = AgentLoop(
             model=ScriptedMockLLM(responses),
@@ -682,7 +682,7 @@ def test_empty_required_language_does_not_disable_safe_finalization(empty_langua
         AssistantResponse(tool_calls=[ToolCall(id=f"search-{index}", name="search_public_repositories", arguments=json.dumps({"query": f"query {index}"}))])
         for index in range(5)
     ]
-    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=512 * 1024)
     with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_full_pool_handler)) as client:
         result = AgentLoop(
             model=ScriptedMockLLM(responses),
@@ -700,7 +700,7 @@ def test_tool_feedback_exposes_budget_snapshot_to_next_model_turn() -> None:
     response = AssistantResponse(
         tool_calls=[ToolCall(id="search", name="search_public_repositories", arguments=json.dumps({"query": "x"}))]
     )
-    budget = RequestBudget(max_candidates=3, max_github_requests=3, max_model_calls=2, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_candidates=3, max_github_requests=3, max_model_calls=2, max_feedback_bytes=512 * 1024)
     with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_full_pool_handler)) as client:
         result = AgentLoop(
             model=ScriptedMockLLM([response, AssistantResponse(content="done")]),
@@ -715,7 +715,7 @@ def test_tool_feedback_exposes_budget_snapshot_to_next_model_turn() -> None:
 
 
 def test_full_candidate_capacity_does_not_block_license_followup_for_accepted_repo() -> None:
-    budget = RequestBudget(max_candidates=5, max_github_requests=5, max_model_calls=5, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_candidates=5, max_github_requests=5, max_model_calls=5, max_feedback_bytes=512 * 1024)
     with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_full_pool_handler)) as client:
         result = AgentLoop(
             model=ScenarioMockLLM("license_followup"),
@@ -748,7 +748,7 @@ def test_unaccepted_candidate_cannot_enter_evidence_via_readme_when_pool_is_full
             )
         ]
     )
-    budget = RequestBudget(max_candidates=5, max_github_requests=5, max_model_calls=5, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_candidates=5, max_github_requests=5, max_model_calls=5, max_feedback_bytes=512 * 1024)
     with GitHubRestClient(budget=budget, transport=httpx.MockTransport(handler)) as client:
         result = AgentLoop(
             model=ScriptedMockLLM([search, outsider_readme, AssistantResponse(content="stopped")]),
@@ -766,7 +766,7 @@ def test_missing_license_remains_unknown_after_followup() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return _search_or_readme_handler(request)
 
-    budget = RequestBudget(max_github_requests=5, max_model_calls=5, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_github_requests=5, max_model_calls=5, max_feedback_bytes=512 * 1024)
     with _client(handler, budget) as client:
         result = AgentLoop(
             model=ScenarioMockLLM("license_followup"),
@@ -783,7 +783,7 @@ def test_archived_state_is_preserved_and_mock_can_stop() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return _search_or_readme_handler(request, archived=True)
 
-    budget = RequestBudget(max_github_requests=5, max_model_calls=5, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_github_requests=5, max_model_calls=5, max_feedback_bytes=512 * 1024)
     with _client(handler, budget) as client:
         result = AgentLoop(
             model=ScenarioMockLLM("archive_complete"),
@@ -811,7 +811,7 @@ def test_multiple_tool_calls_keep_ids_and_results_in_order() -> None:
         ],
         finish_reason="tool_calls",
     )
-    budget = RequestBudget(max_github_requests=5, max_model_calls=3, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_github_requests=5, max_model_calls=3, max_feedback_bytes=512 * 1024)
     with _client(handler, budget) as client:
         result = AgentLoop(
             model=ScriptedMockLLM([first, AssistantResponse(content="done")]),
@@ -843,7 +843,7 @@ def test_invalid_github_response_in_batch_is_tool_feedback_not_loop_crash() -> N
         ToolCall(id="bad-search", name="search_public_repositories", arguments=json.dumps({"query": "bad"})),
         ToolCall(id="good-repo", name="get_public_repository", arguments=json.dumps({"owner": "octo", "repo": "demo-agent"})),
     ])
-    budget = RequestBudget(max_github_requests=3, max_model_calls=2, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_github_requests=3, max_model_calls=2, max_feedback_bytes=512 * 1024)
     with _client(handler, budget) as client:
         result = AgentLoop(
             model=ScriptedMockLLM([response, AssistantResponse(content="partial evidence")]),
@@ -876,7 +876,7 @@ def test_duplicate_tool_call_id_is_blocked_without_second_execution() -> None:
             ToolCall(id="same", name="search_public_repositories", arguments=json.dumps({"query": "y"})),
         ]
     )
-    budget = RequestBudget(max_github_requests=5, max_model_calls=3, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_github_requests=5, max_model_calls=3, max_feedback_bytes=512 * 1024)
     with _client(handler, budget) as client:
         result = AgentLoop(
             model=ScriptedMockLLM([response]),
@@ -904,7 +904,7 @@ def test_protocol_errors_are_feedback_and_do_not_reach_network(response: Assista
         requests.append(request)
         return httpx.Response(500, request=request)
 
-    budget = RequestBudget(max_github_requests=5, max_model_calls=3, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_github_requests=5, max_model_calls=3, max_feedback_bytes=512 * 1024)
     with _client(handler, budget) as client:
         result = AgentLoop(
             model=ScriptedMockLLM([response, AssistantResponse(content="recovered")]),
@@ -922,7 +922,7 @@ def test_repeated_action_is_blocked() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"total_count": 0, "items": []}, request=request)
 
-    budget = RequestBudget(max_github_requests=5, max_model_calls=5, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_github_requests=5, max_model_calls=5, max_feedback_bytes=512 * 1024)
     with _client(handler, budget) as client:
         result = AgentLoop(
             model=ScenarioMockLLM("repeat_tool"),
@@ -947,7 +947,7 @@ def test_model_call_budget_stops_before_next_model_request() -> None:
         tool_calls=[ToolCall(id="search", name="search_public_repositories", arguments=json.dumps({"query": "x"}))]
     )
     model = ScriptedMockLLM([first, AssistantResponse(content="must not be requested")])
-    budget = RequestBudget(max_github_requests=5, max_candidates=1, max_model_calls=1, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_github_requests=5, max_candidates=1, max_model_calls=1, max_feedback_bytes=512 * 1024)
     with _client(handler, budget) as client:
         result = AgentLoop(model=model, tools=build_github_tool_registry(client), budget=budget).run("budget")
 
@@ -961,7 +961,7 @@ def test_github_request_budget_stops_before_next_tool_and_model() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return _search_or_readme_handler(request)
 
-    budget = RequestBudget(max_github_requests=1, max_candidates=1, max_model_calls=5, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_github_requests=1, max_candidates=1, max_model_calls=5, max_feedback_bytes=512 * 1024)
     with _client(handler, budget) as client:
         result = AgentLoop(
             model=ScenarioMockLLM("readme_followup"),
@@ -1047,7 +1047,7 @@ def test_multiple_tool_calls_mid_budget_stop_produces_blocked_result_for_remaini
             ToolCall(id="second", name="get_public_repository", arguments=json.dumps({"owner": "octo", "repo": "demo-agent"})),
         ]
     )
-    budget = RequestBudget(max_github_requests=1, max_model_calls=3, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_github_requests=1, max_model_calls=3, max_feedback_bytes=512 * 1024)
     with _client(handler, budget) as client:
         result = AgentLoop(
             model=ScriptedMockLLM([response, AssistantResponse(content="should not reach")]),
@@ -1093,7 +1093,7 @@ def test_search_candidates_can_trigger_finalization_without_redundant_model_turn
         AssistantResponse(tool_calls=[ToolCall(id="search", name="search_public_repositories", arguments=json.dumps({"query": "agents"}))]),
         AssistantResponse(content="Compared the returned repository metadata."),
     ])
-    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_candidates=3, max_github_requests=8, max_model_calls=5, max_feedback_bytes=512 * 1024)
     with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_full_pool_handler), max_retries=0) as client:
         result = AgentLoop(
             model=mock,
@@ -1138,7 +1138,7 @@ def test_malicious_readme_remains_data_and_never_creates_execution_event() -> No
     def handler(request: httpx.Request) -> httpx.Response:
         return _search_or_readme_handler(request)
 
-    budget = RequestBudget(max_github_requests=5, max_model_calls=5, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_github_requests=5, max_model_calls=5, max_feedback_bytes=512 * 1024)
     with _client(handler, budget) as client:
         result = AgentLoop(
             model=ScenarioMockLLM("malicious_readme"),
@@ -1165,7 +1165,7 @@ def test_repeated_action_triggers_finalization_when_candidates_exist() -> None:
         AssistantResponse(content="1) Verified Facts: Found octo/repo-0.\n2) Evidence Gaps: None.\n3) Recommendation: octo/repo-0."),
     ]
     mock = ScriptedMockLLM(responses)
-    budget = RequestBudget(max_candidates=3, max_github_requests=5, max_model_calls=5, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_candidates=3, max_github_requests=5, max_model_calls=5, max_feedback_bytes=512 * 1024)
     with GitHubRestClient(budget=budget, transport=httpx.MockTransport(_full_pool_handler), max_retries=0) as client:
         result = AgentLoop(
             model=mock,
@@ -1218,7 +1218,7 @@ def test_consecutive_rate_limits_trigger_finalization_when_candidates_exist() ->
         AssistantResponse(content="1) Verified Facts: Found octo/demo-agent from search.\n2) Evidence Gaps: Upstream rate limit prevented README retrieval.\n3) Recommendation: octo/demo-agent based on search metadata."),
     ]
     mock = ScriptedMockLLM(responses)
-    budget = RequestBudget(max_candidates=3, max_github_requests=5, max_model_calls=5, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_candidates=3, max_github_requests=5, max_model_calls=5, max_feedback_bytes=512 * 1024)
     with GitHubRestClient(budget=budget, transport=httpx.MockTransport(handler), max_retries=0) as client:
         result = AgentLoop(
             model=mock,
@@ -1258,7 +1258,7 @@ def test_consecutive_rate_limits_stop_cleanly_when_no_candidates() -> None:
         AssistantResponse(content="Must not be reached"),
     ]
     mock = ScriptedMockLLM(responses)
-    budget = RequestBudget(max_candidates=3, max_github_requests=5, max_model_calls=5, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_candidates=3, max_github_requests=5, max_model_calls=5, max_feedback_bytes=512 * 1024)
     with GitHubRestClient(budget=budget, transport=httpx.MockTransport(handler), max_retries=0) as client:
         result = AgentLoop(
             model=mock,
@@ -1304,7 +1304,7 @@ def test_rate_limit_counter_resets_on_successful_tool_call() -> None:
         AssistantResponse(content="Final recommendation based on search 2."),
     ]
     mock = ScriptedMockLLM(responses)
-    budget = RequestBudget(max_candidates=3, max_github_requests=5, max_model_calls=5, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_candidates=3, max_github_requests=5, max_model_calls=5, max_feedback_bytes=512 * 1024)
     with GitHubRestClient(budget=budget, transport=httpx.MockTransport(handler), max_retries=0) as client:
         result = AgentLoop(
             model=mock,
@@ -1380,7 +1380,7 @@ def test_investigated_candidates_satisfy_evidence_when_search_pool_exceeds_budge
         AssistantResponse(content="1) Verified Facts: repo-0, repo-1, repo-2 verified via README.\n2) Evidence Gaps: None.\n3) Recommendation: repo-0."),
     ]
     mock = ScriptedMockLLM(responses)
-    budget = RequestBudget(max_candidates=3, max_github_requests=10, max_model_calls=5, max_feedback_bytes=20_000)
+    budget = RequestBudget(max_candidates=3, max_github_requests=10, max_model_calls=5, max_feedback_bytes=512 * 1024)
     with GitHubRestClient(budget=budget, required_language="Python", transport=httpx.MockTransport(handler), max_retries=0) as client:
         result = AgentLoop(
             model=mock,
@@ -1509,3 +1509,77 @@ def test_capacity_blocked_candidates_do_not_block_finalization() -> None:
         assert blocked.error.code == "candidate_capacity_full"
 
 
+
+
+def _large_readme_handler(request: httpx.Request) -> httpx.Response:
+    if request.url.path == "/search/repositories":
+        return httpx.Response(200, json={"total_count": 1, "items": [_repo()]}, request=request)
+    if request.url.path.endswith("/readme"):
+        content = "A" * 40_000
+        return httpx.Response(
+            200,
+            json={"encoding": "base64", "content": base64.b64encode(content.encode()).decode(), "size": len(content)},
+            request=request,
+        )
+    return httpx.Response(404, json={"message": "Not Found"}, request=request)
+
+
+def test_oversized_tool_result_is_clipped_instead_of_ending_the_run() -> None:
+    model = ScriptedMockLLM([
+        AssistantResponse(tool_calls=[ToolCall(id="readme-1", name="get_public_readme", arguments=json.dumps({"owner": "octo", "repo": "demo-agent"}))]),
+        AssistantResponse(content="README reviewed with a clipped payload."),
+    ])
+    budget = RequestBudget(
+        max_candidates=3,
+        max_github_requests=8,
+        max_model_calls=4,
+        max_feedback_bytes=512 * 1024,
+        max_feedback_item_bytes=2_000,
+    )
+    with _client(_large_readme_handler, budget) as client:
+        result = AgentLoop(model=model, tools=build_github_tool_registry(client), budget=budget).run(
+            "inspect a documented repository"
+        )
+
+    assert result.status == "completed"
+    assert model.calls == 2
+    tool_message = next(message for message in result.messages if message.role == "tool")
+    assert len(tool_message.content.encode("utf-8")) <= 2_000
+    assert "[truncated: original" in tool_message.content
+    assert any(event.event_type == "feedback_clipped" for event in result.events)
+    clipped = next(event for event in result.events if event.event_type == "feedback_clipped")
+    assert clipped.details["source"] == "tool"
+    assert clipped.details["label"] == "get_public_readme"
+    assert clipped.details["original_bytes"] > clipped.details["kept_bytes"]
+    finished = next(event for event in result.events if event.event_type == "tool_finished")
+    assert finished.details["result_bytes"] > finished.details["feedback_bytes"] > 0
+    assert finished.details["feedback_bytes_used"] == 2_000
+
+
+def test_cumulative_feedback_budget_stops_the_run_and_records_the_trace() -> None:
+    model = ScriptedMockLLM([
+        AssistantResponse(tool_calls=[ToolCall(id="search-1", name="search_public_repositories", arguments=json.dumps({"query": "agents"}))]),
+        AssistantResponse(content="should never be requested"),
+    ])
+    budget = RequestBudget(
+        max_candidates=3,
+        max_github_requests=8,
+        max_model_calls=4,
+        max_feedback_bytes=1_000,
+    )
+    with _client(_full_pool_handler, budget) as client:
+        result = AgentLoop(model=model, tools=build_github_tool_registry(client), budget=budget).run(
+            "find agent repositories"
+        )
+
+    assert result.status == "terminated"
+    assert result.termination_reason == "feedback_bytes"
+    assert model.calls == 1
+    assert "feedback_bytes" in result.budget["fatal_exhausted_dimensions"]
+    assert result.feedback_trace
+    first = result.feedback_trace[0]
+    assert first["source"] == "tool"
+    assert first["label"] == "search_public_repositories"
+    assert first["bytes"] > 0
+    assert first["index"] == 1
+    assert "feedback_records" not in budget.snapshot()

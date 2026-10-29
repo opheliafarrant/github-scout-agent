@@ -119,6 +119,7 @@ def test_run_route_streaming_and_storage(client: TestClient, monkeypatch: pytest
     report_data = report_res.json()
     assert report_data["status"] == "completed"
     assert report_data["termination_reason"] == "model_finalized"
+    assert report_data["feedback_trace"] == []
 
 
 def test_report_route_not_found(client: TestClient) -> None:
@@ -249,3 +250,32 @@ def test_history_store_corrupted_lines_resilience(tmp_path: Path) -> None:
     assert "valid_1" in store
     assert "valid_2" in store
 
+
+
+def test_history_store_persists_the_feedback_trace(tmp_path: Path) -> None:
+    history_file = tmp_path / "web_history.jsonl"
+    store = HistoryStore(file_path=history_file, max_entries=10)
+    store.set(
+        TaskStatus(
+            id="task_trace",
+            task="Search agents",
+            status="running",
+            started_at=1700000000.0,
+        )
+    )
+    trace = [
+        {"index": 1, "source": "tool", "label": "get_public_readme", "bytes": 900, "used": 900},
+        {"index": 2, "source": "model", "label": "assistant", "bytes": 120, "used": 1_020},
+    ]
+    store.update(
+        "task_trace",
+        status="completed",
+        termination_reason="model_finalized",
+        report="# report",
+        feedback_trace=trace,
+    )
+
+    reloaded = HistoryStore(file_path=history_file, max_entries=10)
+    stored = reloaded.get("task_trace")
+    assert stored is not None
+    assert stored.feedback_trace == trace

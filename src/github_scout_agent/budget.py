@@ -27,6 +27,7 @@ class RequestBudget:
     max_model_calls: int | None = 10
     max_task_seconds: float | None = 180
     max_feedback_bytes: int | None = 64 * 1024
+    max_feedback_item_bytes: int | None = 64 * 1024
     max_model_response_bytes: int | None = 64 * 1024
     clock: Callable[[], float] = time.monotonic
     github_requests_used: int = 0
@@ -36,6 +37,7 @@ class RequestBudget:
     model_calls_used: int = 0
     feedback_bytes_used: int = 0
     model_response_bytes_used: int = 0
+    feedback_records: list[dict[str, object]] = field(default_factory=list)
     task_started_at: float | None = None
     _dimensions_exhausted: set[str] = field(default_factory=set)
 
@@ -64,13 +66,36 @@ class RequestBudget:
             raise BudgetExceeded("model_calls", self.max_model_calls, self.model_calls_used)
         self.model_calls_used += 1
 
-    def record_feedback_size(self, size: int) -> None:
+    def record_feedback_size(self, size: int, *, source: str = "unknown", label: str = "") -> None:
+        """Record one prompt-bound payload; overflow is signalled, never raised.
+
+        A single oversized payload must not abort the run: the agent loop clips it
+        to max_feedback_item_bytes before recording. Crossing the cumulative
+        max_feedback_bytes ceiling marks the dimension exhausted so the loop can
+        stop gracefully and report why.
+        """
+
         if size < 0:
             raise ValueError("feedback size cannot be negative")
         self.feedback_bytes_used += size
-        if self.max_feedback_bytes is not None and size > self.max_feedback_bytes:
+        self.feedback_records.append(
+            {
+                "index": len(self.feedback_records) + 1,
+                "source": source,
+                "label": label,
+                "bytes": size,
+                "used": self.feedback_bytes_used,
+            }
+        )
+        if self.max_feedback_bytes is not None and self.feedback_bytes_used > self.max_feedback_bytes:
             self._dimensions_exhausted.add("feedback_bytes")
-            raise BudgetExceeded("feedback_bytes", self.max_feedback_bytes, size)
+
+    @property
+    def feedback_exhausted(self) -> bool:
+        return "feedback_bytes" in self._dimensions_exhausted
+
+    def feedback_trace(self) -> list[dict[str, object]]:
+        return [dict(record) for record in self.feedback_records]
 
     def record_model_response_chunk(self, size: int, response_size_so_far: int) -> None:
         if size < 0 or response_size_so_far < 0:
@@ -176,6 +201,7 @@ class RequestBudget:
             "max_model_calls": self.max_model_calls,
             "max_task_seconds": self.max_task_seconds,
             "max_feedback_bytes": self.max_feedback_bytes,
+            "max_feedback_item_bytes": self.max_feedback_item_bytes,
             "max_model_response_bytes": self.max_model_response_bytes,
             "exhausted_dimensions": self.exhausted_dimensions,
             "fatal_exhausted_dimensions": self.fatal_exhausted_dimensions,

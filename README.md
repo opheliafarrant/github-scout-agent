@@ -8,7 +8,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/version-v1.1.0-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg" alt="Python Version">
-  <img src="https://img.shields.io/badge/tests-244%20passed-success.svg" alt="Test Status">
+  <img src="https://img.shields.io/badge/tests-248%20passed-success.svg" alt="Test Status">
   <img src="https://img.shields.io/badge/architecture-Read--Only%20GET%20%7C%20Zero--Execution-brightgreen.svg" alt="Architecture">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-brightgreen.svg" alt="License"></a>
 </p>
@@ -230,7 +230,7 @@ github-scout-agent gate-b --dry-run
 ```powershell
 pytest -m "not live_github" --tb=short
 ```
-- **测试结果**：**244 passed, 1 deselected**（耗时 ~8 秒，100% 通过）。
+- **测试结果**：**248 passed, 1 deselected**（耗时 ~8 秒，100% 通过）。
 - **覆盖核心机制**：
   - 七大 GitHub 工具参数 Pydantic 校验与 GET-only 拦截；
   - 预算硬性拦截、候选容量满载与平滑降级；

@@ -319,6 +319,25 @@ def test_render_mvp_report_on_rate_limited_termination() -> None:
     assert "rate_limited" in report
 
 
+def test_render_mvp_report_names_the_budget_that_stopped_research() -> None:
+    result = AgentRunResult(
+        status="terminated",
+        termination_reason="feedback_bytes",
+        final_text="Evidence reviewed.",
+        messages=[],
+        tool_results=[],
+        events=[],
+        budget={"fatal_exhausted_dimensions": ["feedback_bytes"], "feedback_bytes_used": 600_000},
+        evidence_complete=False,
+        evidence_gaps=["prompt-size budget exhausted"],
+    )
+
+    report = render_mvp_report("find tools", result)
+
+    assert "- Research stopped by budget: feedback_bytes" in report
+    assert "- Termination: feedback_bytes" in report
+
+
 def test_acceptance_scenario_deep_evidence_research_and_exclusion() -> None:
     task = (
         "Find three open-source Python AI agents that can search GitHub repositories, "

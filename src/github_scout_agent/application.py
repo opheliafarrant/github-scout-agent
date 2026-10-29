@@ -181,9 +181,19 @@ def render_mvp_report(task: str, result: AgentRunResult) -> str:
         f"- Status: {result.status}",
         f"- Termination: {result.termination_reason}",
         f"- Completeness: {'complete' if _report_is_complete(result) else 'partial'}",
-        "",
-        "## Candidate evidence",
     ]
+    stopped_by = [
+        str(dimension)
+        for dimension in result.budget.get("fatal_exhausted_dimensions", []) or []
+    ]
+    if stopped_by:
+        lines.append(f"- Research stopped by budget: {', '.join(stopped_by)}")
+    lines.extend(
+        [
+            "",
+            "## Candidate evidence",
+        ]
+    )
     candidates = _candidate_records(result.tool_results)
     if not candidates:
         lines.append("- No accepted repository candidate was returned.")
